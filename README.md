@@ -44,3 +44,7 @@ cargo test
 ```
 
 On Linux, device access needs `usbmuxd` running (or Orchard's own mux, later).
+
+## License
+
+MIT, see [LICENSE](LICENSE).
