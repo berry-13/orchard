@@ -1,0 +1,14 @@
+[package]
+name = "orchard-device"
+description = "Device transport: usbmuxd, lockdown, pairing, AFC, installation proxy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+orchard-core.workspace = true
+
+[lints]
+workspace = true

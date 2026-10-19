@@ -1,0 +1,14 @@
+[package]
+name = "orchard-library"
+description = "Media library management and sync (music, video, books, photos)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+orchard-core.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,28 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/berry-13/orchard"
+
+[workspace.dependencies]
+orchard-core = { path = "crates/orchard-core" }
+orchard-device = { path = "crates/orchard-device" }
+orchard-backup = { path = "crates/orchard-backup" }
+orchard-ipa = { path = "crates/orchard-ipa" }
+orchard-library = { path = "crates/orchard-library" }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

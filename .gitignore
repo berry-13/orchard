@@ -1,0 +1,5 @@
+/target
+*.ipa
+*.mobilebackup
+.env
+.DS_Store
