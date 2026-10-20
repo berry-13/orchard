@@ -9,6 +9,29 @@ repository.workspace = true
 
 [dependencies]
 orchard-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+plist.workspace = true
+zip.workspace = true
+reqwest.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "rt", "process"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+flate2 = "1"
+png = "0.17"
+md-5 = "0.10"
+getrandom = "0.2"
+apple-codesign = { version = "0.29", default-features = false }
+cryptographic-message-syntax = "0.27"
+x509-certificate = "0.24"
+tempfile.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "time"] }
+wiremock = "0.6"
+chrono = "0.4"
+p12 = "0.6"
+semver = "1"
 
 [lints]
 workspace = true
