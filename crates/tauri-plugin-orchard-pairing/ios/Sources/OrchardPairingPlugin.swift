@@ -125,7 +125,6 @@ final class DeviceRelay {
   private var found: [String: (host: String, port: UInt16)] = [:]
   private var resolving: [String: NWConnection] = [:]
   private var relays: [Relay] = []
-  private var deviceRelay: DeviceRelay?
   private var report: DispatchSourceTimer?
   private var running = true
 
@@ -292,6 +291,7 @@ class OrchardPairingPlugin: Plugin {
   private let queue = DispatchQueue(label: "orchard.pairing")
   private var listener: NWListener?
   private var relays: [Relay] = []
+  private var deviceRelay: DeviceRelay?
 
   /// Announces the pairing host on this device's network and relays every
   /// connection a device opens to it. Resolves with the port once announced.
