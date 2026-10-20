@@ -51,14 +51,27 @@ impl Service {
         self.settings.data_dir()
     }
 
-    /// Lists a device that a client on its network relays through `dialer`,
-    /// its remote pairing service being on `port`. Returns its UDID.
+    /// The device paired over Wi-Fi that published a `_remotepairing._tcp`
+    /// advertisement with these `identifier` and `authTag` TXT values.
+    pub fn advertised_device(&self, identifier: &str, auth_tag: &str) -> Option<String> {
+        let store = self.devices.wifi_pairing();
+        store
+            .advertised(identifier, auth_tag)
+            .ok()
+            .flatten()
+            .map(|d| d.udid)
+    }
+
+    /// Lists `udid`, which a client on its network relays through `dialer`,
+    /// its remote pairing service being on `port`.
     pub async fn attach_relayed_device(
         &self,
+        udid: &str,
         dialer: Arc<dyn orchard_device::Dialer>,
         port: u16,
-    ) -> CmdResult<String> {
-        commands::devices::attach_relayed(self.events.clone(), &self.devices, dialer, port).await
+    ) -> CmdResult<()> {
+        commands::devices::attach_relayed(self.events.clone(), &self.devices, udid, dialer, port)
+            .await
     }
 
     /// Unlists a relayed device, when its client stops relaying it.

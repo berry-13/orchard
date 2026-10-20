@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 
 use idevice::ReadWrite;
 use idevice::remote_pairing::{
-    PAIRABLE_HOST_SERVICE_TYPE, PairableHost, PairableHostInfo, RpPairingFile, RpPairingSocket,
+    PAIRABLE_HOST_SERVICE_TYPE, PairableHost, PairableHostInfo, PeerDevice, RpPairingFile,
+    RpPairingSocket,
 };
 use orchard_core::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -209,6 +210,21 @@ impl WifiPairingStore {
         Ok(devices)
     }
 
+    /// The device paired with one of these records that published this
+    /// `_remotepairing._tcp` advertisement, by its `identifier` and `authTag`
+    /// TXT values. Other devices on the network advertise too.
+    pub fn advertised(&self, identifier: &str, auth_tag: &str) -> Result<Option<PairedDevice>> {
+        Ok(self
+            .devices()?
+            .into_iter()
+            .find(|(_, record)| {
+                record
+                    .alt_irk()
+                    .is_some_and(|irk| PeerDevice::validate_auth_tag(irk, identifier, auth_tag))
+            })
+            .map(|(device, _)| device))
+    }
+
     /// The device with `udid` and its record.
     pub fn find(&self, udid: &str) -> Result<Option<(PairedDevice, RpPairingFile)>> {
         Ok(self.devices()?.into_iter().find(|(d, _)| d.udid == udid))
@@ -261,6 +277,39 @@ mod tests {
         assert_eq!(store.list().unwrap(), vec![imported.clone()]);
         let loaded = store.load(&imported.identifier).unwrap().unwrap();
         assert_eq!(loaded.public_key_bytes(), record.public_key_bytes());
+    }
+
+    #[test]
+    fn recognizes_the_paired_device_advertising() {
+        use base64::Engine;
+        use idevice::remote_pairing::compute_auth_tag;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = WifiPairingStore::new(dir.path());
+        let mut record = RpPairingFile::generate("orchard-test");
+        let irk = [7u8; 16];
+        record.alt_irk = Some(irk.to_vec());
+        let device = PairedDevice {
+            name: "iPhone".into(),
+            model: "iPhone19,2".into(),
+            udid: "U1".into(),
+            identifier: record.identifier().to_owned(),
+            address: None,
+            port: None,
+        };
+        store.save(&record, &device).unwrap();
+
+        let tag =
+            base64::engine::general_purpose::STANDARD.encode(compute_auth_tag(&irk, "SERVICE-ID"));
+        let found = store.advertised("SERVICE-ID", &tag).unwrap();
+        assert_eq!(found.map(|d| d.udid).as_deref(), Some("U1"));
+        assert!(store.advertised("OTHER-ID", &tag).unwrap().is_none());
+        assert!(
+            store
+                .advertised("SERVICE-ID", "not base64")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

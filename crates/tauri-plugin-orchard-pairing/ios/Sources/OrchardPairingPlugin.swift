@@ -24,6 +24,14 @@ struct RelayArgs: Decodable {
   let token: String
 }
 
+/// The WebSockets to the server. Each relayed device connection is one, and
+/// URLSession.shared allows only a few at a time to one host.
+let relaySession: URLSession = {
+  let configuration = URLSessionConfiguration.default
+  configuration.httpMaximumConnectionsPerHost = 64
+  return URLSession(configuration: configuration)
+}()
+
 /// Pipes one device connection to the server's relay WebSocket, byte for byte,
 /// until either side ends.
 final class Relay {
@@ -34,7 +42,7 @@ final class Relay {
 
   init(device: NWConnection, url: URL, token: String, queue: DispatchQueue) {
     self.device = device
-    socket = URLSession.shared.webSocketTask(with: url)
+    socket = relaySession.webSocketTask(with: url)
     socket.resume()
     let hello = (try? JSONSerialization.data(withJSONObject: ["token": token]))
       .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
@@ -123,6 +131,9 @@ final class DeviceRelay {
   private var browser: NWBrowser?
   /// Bonjour service name to the address it resolved to.
   private var found: [String: (host: String, port: UInt16)] = [:]
+  /// Bonjour service name to its `identifier` and `authTag` TXT values, by
+  /// which the server tells the devices paired with it from the others.
+  private var txt: [String: (identifier: String, authTag: String)] = [:]
   private var resolving: [String: NWConnection] = [:]
   private var relays: [Relay] = []
   private var report: DispatchSourceTimer?
@@ -158,7 +169,7 @@ final class DeviceRelay {
 
   private func connect() {
     guard running, let url = URL(string: args.controlUrl) else { return }
-    let socket = URLSession.shared.webSocketTask(with: url)
+    let socket = relaySession.webSocketTask(with: url)
     self.socket = socket
     socket.resume()
     send(["token": args.token])
@@ -212,27 +223,47 @@ final class DeviceRelay {
   }
 
   private func sendDevices() {
-    let devices = found.map { name, address in
-      ["name": name, "host": address.host, "port": Int(address.port)] as [String: Any]
+    let devices = found.compactMap { entry -> [String: Any]? in
+      let (name, address) = (entry.key, entry.value)
+      guard let meta = txt[name] else { return nil }
+      return [
+        "name": name, "host": address.host, "port": Int(address.port),
+        "identifier": meta.identifier, "authTag": meta.authTag,
+      ]
     }
     send(["type": "devices", "devices": devices])
   }
 
   private func browse() {
-    let browser = NWBrowser(for: .bonjour(type: "_remotepairing._tcp", domain: nil), using: .tcp)
+    let browser = NWBrowser(
+      for: .bonjourWithTXTRecord(type: "_remotepairing._tcp", domain: nil), using: .tcp)
     browser.browseResultsChangedHandler = { [weak self] results, _ in
       guard let self = self else { return }
       var names = Set<String>()
+      var changed = false
       for result in results {
         guard case .service(let name, _, _, _) = result.endpoint else { continue }
+        // Only advertisements a paired host can recognize are of use.
+        guard
+          case .bonjour(let record) = result.metadata,
+          let identifier = record["identifier"],
+          let authTag = record["authTag"]
+        else { continue }
         names.insert(name)
+        if self.txt[name]?.identifier != identifier || self.txt[name]?.authTag != authTag {
+          self.txt[name] = (identifier, authTag)
+          changed = true
+        }
         if self.found[name] == nil && self.resolving[name] == nil {
           self.resolve(name: name, endpoint: result.endpoint)
         }
       }
-      let gone = self.found.keys.filter { !names.contains($0) }
-      gone.forEach { self.found.removeValue(forKey: $0) }
-      if !gone.isEmpty { self.sendDevices() }
+      let gone = self.txt.keys.filter { !names.contains($0) }
+      gone.forEach {
+        self.txt.removeValue(forKey: $0)
+        self.found.removeValue(forKey: $0)
+      }
+      if changed || !gone.isEmpty { self.sendDevices() }
     }
     browser.stateUpdateHandler = { [weak self] state in
       // Local Network access was refused, or the network went away: retry.
@@ -292,6 +323,8 @@ class OrchardPairingPlugin: Plugin {
   private var listener: NWListener?
   private var relays: [Relay] = []
   private var deviceRelay: DeviceRelay?
+  /// Kept while a pairing pauses the device relay, to start it again after.
+  private var relayArgs: RelayArgs?
 
   /// Announces the pairing host on this device's network and relays every
   /// connection a device opens to it. Resolves with the port once announced.
@@ -301,7 +334,13 @@ class OrchardPairingPlugin: Plugin {
       invoke.reject("The relay URL is not valid")
       return
     }
-    queue.sync { stopAll() }
+    // A device that is pairing drops the pairing when another connection
+    // reaches its remote pairing service, so pause the device relay.
+    queue.sync {
+      stopAll()
+      deviceRelay?.stop()
+      deviceRelay = nil
+    }
 
     let listener: NWListener
     do {
@@ -357,6 +396,7 @@ class OrchardPairingPlugin: Plugin {
   @objc public func startDeviceRelay(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(RelayArgs.self)
     queue.sync {
+      relayArgs = args
       deviceRelay?.stop()
       deviceRelay = DeviceRelay(args: args, queue: queue)
     }
@@ -365,15 +405,21 @@ class OrchardPairingPlugin: Plugin {
 
   @objc public func stopDeviceRelay(_ invoke: Invoke) {
     queue.sync {
+      relayArgs = nil
       deviceRelay?.stop()
       deviceRelay = nil
     }
     invoke.resolve()
   }
 
-  /// Stops announcing and ends every relay.
+  /// Stops announcing and ends every relay, then resumes the device relay.
   @objc public func stop(_ invoke: Invoke) {
-    queue.sync { stopAll() }
+    queue.sync {
+      stopAll()
+      if deviceRelay == nil, let args = relayArgs {
+        deviceRelay = DeviceRelay(args: args, queue: queue)
+      }
+    }
     invoke.resolve()
   }
 

@@ -235,31 +235,32 @@ pub async fn add_wifi_device(
     .into())
 }
 
-/// Opens a device a client found on its network and relays, trying each
-/// Wi-Fi pairing, and lists it. Returns its UDID.
+/// Opens `udid`, a device a client found on its network and relays, and
+/// lists it.
 pub async fn attach_relayed(
     app: Events,
     state: &Arc<DeviceState>,
+    udid: &str,
     dialer: Arc<dyn Dialer>,
     port: u16,
-) -> CmdResult<String> {
+) -> CmdResult<()> {
+    let id = Udid(udid.to_owned());
     let conn =
-        DeviceConnection::connect_relayed(&*dialer, port, state.wifi_pairing(), None).await?;
+        DeviceConnection::connect_relayed(&*dialer, port, state.wifi_pairing(), Some(&id)).await?;
     let info = tokio::time::timeout(INFO_TIMEOUT, conn.info())
         .await
         .map_err(|_| Error::Device("the relayed device did not answer".into()))??;
     let info = to_info(info, Connection::Wifi);
-    let udid = info.device.udid.clone();
-    state.add_relayed(&udid, dialer, port, conn);
+    state.add_relayed(udid, dialer, port, conn);
     state.remember(&info.device);
     emit_device(
         &app,
         DeviceEvent {
             kind: DeviceEventKind::Attached,
-            udid: udid.clone(),
+            udid: udid.to_owned(),
         },
     );
-    Ok(udid)
+    Ok(())
 }
 
 /// Unlists a relayed device whose client went away.

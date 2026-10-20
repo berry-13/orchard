@@ -11,8 +11,9 @@
 //! - `GET  /api/relay/pair/{id}`    WebSocket; send `{token}` first, then the bytes of the
 //!   connection a device opened to the pairing host a client announced (`start_wifi_pairing`)
 //! - `GET  /api/relay/devices`      WebSocket; send `{token}` first, then
-//!   `{type: "devices", devices: [{name, host, port}]}` whenever the paired devices found
-//!   on the client's network change; the server sends `{type: "open", id, host, port}`
+//!   `{type: "devices", devices: [{name, host, port, identifier, authTag}]}` with the
+//!   `_remotepairing._tcp` services on the client's network whenever they change; the
+//!   server opens the ones paired with it and sends `{type: "open", id, host, port}`
 //! - `GET  /api/relay/stream/{id}`  WebSocket; send `{token}` first, then the bytes of the
 //!   device connection asked for with `open`
 //!
@@ -417,17 +418,22 @@ enum RelayReport {
     Devices { devices: Vec<RelayedService> },
 }
 
-/// A paired device's remote pairing service, as a client found it.
+/// A device's remote pairing service, as a client found it.
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RelayedService {
-    /// The Bonjour service name, stable while the device stays.
-    name: String,
     host: String,
     port: u16,
+    /// The advertisement's TXT values, which tell whether it is a device
+    /// paired with this server.
+    #[serde(default)]
+    identifier: String,
+    #[serde(default)]
+    auth_tag: String,
 }
 
-/// Bonjour service name to the UDID it was listed as, `None` while opening.
-type Relayed = Arc<Mutex<HashMap<String, Option<String>>>>;
+/// UDIDs of the devices a client relays; false while still opening.
+type Relayed = Arc<Mutex<HashMap<String, bool>>>;
 
 /// Lists the devices a client relays, for as long as its socket stays open.
 async fn run_device_relay(socket: WebSocket, state: Arc<AppState>) {
@@ -466,7 +472,7 @@ async fn run_device_relay(socket: WebSocket, state: Arc<AppState>) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .drain()
-        .filter_map(|(_, udid)| udid)
+        .filter_map(|(udid, open)| open.then_some(udid))
         .collect();
     for udid in udids {
         state.service.detach_relayed_device(&udid);
@@ -476,30 +482,40 @@ async fn run_device_relay(socket: WebSocket, state: Arc<AppState>) {
     }
 }
 
-/// Unlists devices the client no longer sees and opens the new ones. A device
-/// that fails to open is tried again on the client's next report.
+/// Opens the devices paired with this server among those the client found,
+/// and unlists the ones it no longer sees. Other devices are left alone. A
+/// device that fails to open is tried again on the client's next report.
 fn sync_relayed(
     state: &Arc<AppState>,
     control: &mpsc::UnboundedSender<String>,
     relayed: &Relayed,
     devices: Vec<RelayedService>,
 ) {
+    let mut paired: HashMap<String, RelayedService> = HashMap::new();
+    for device in devices {
+        if let Some(udid) = state
+            .service
+            .advertised_device(&device.identifier, &device.auth_tag)
+        {
+            paired.entry(udid).or_insert(device);
+        }
+    }
     let mut known = relayed.lock().unwrap_or_else(|e| e.into_inner());
     let gone: Vec<String> = known
         .keys()
-        .filter(|name| !devices.iter().any(|d| &d.name == *name))
+        .filter(|udid| !paired.contains_key(*udid))
         .cloned()
         .collect();
-    for name in gone {
-        if let Some(Some(udid)) = known.remove(&name) {
+    for udid in gone {
+        if known.remove(&udid) == Some(true) {
             state.service.detach_relayed_device(&udid);
         }
     }
-    for device in devices {
-        if known.contains_key(&device.name) {
+    for (udid, device) in paired {
+        if known.contains_key(&udid) {
             continue;
         }
-        known.insert(device.name.clone(), None);
+        known.insert(udid.clone(), false);
         let dialer = Arc::new(relay::RelayDialer::new(
             device.host,
             control.clone(),
@@ -509,18 +525,18 @@ fn sync_relayed(
         tokio::spawn(async move {
             let result = state
                 .service
-                .attach_relayed_device(dialer, device.port)
+                .attach_relayed_device(&udid, dialer, device.port)
                 .await;
             let mut known = relayed.lock().unwrap_or_else(|e| e.into_inner());
             match result {
                 // The client may have gone while the device opened.
-                Ok(udid) => match known.get_mut(&device.name) {
-                    Some(slot) => *slot = Some(udid),
+                Ok(()) => match known.get_mut(&udid) {
+                    Some(open) => *open = true,
                     None => state.service.detach_relayed_device(&udid),
                 },
                 Err(e) => {
-                    eprintln!("relayed device {}: {}", device.name, e.message);
-                    known.remove(&device.name);
+                    eprintln!("relayed device {udid}: {}", e.message);
+                    known.remove(&udid);
                 }
             }
         });
