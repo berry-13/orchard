@@ -21,6 +21,8 @@ idevice = { workspace = true, features = [
     "screenshotr",
     "syslog_relay",
     "diagnostics_relay",
+    "rsd",
+    "tunnel_tcp_stack",
 ] }
 tokio = { workspace = true, features = ["sync", "rt", "fs", "io-util", "time", "macros", "net"] }
 serde.workspace = true

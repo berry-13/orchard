@@ -161,13 +161,8 @@ pub async fn create_backup(
     run_task(&app, tasks, task_id, |rep| async move {
         rep.progress(&Progress::new("prepare", 0, None));
         tokio::fs::create_dir_all(&root).await?;
-        orchard_backup::create_backup(
-            conn.provider(),
-            &root,
-            mode == BackupMode::Full,
-            rep.callback(),
-        )
-        .await?;
+        orchard_backup::create_backup(&conn, &root, mode == BackupMode::Full, rep.callback())
+            .await?;
         Ok(())
     })
     .await
@@ -280,14 +275,8 @@ pub async fn restore_backup(
     };
     run_task(&app, tasks, task_id, |rep| async move {
         rep.progress(&Progress::new("prepare", 0, None));
-        orchard_backup::restore_backup(
-            conn.provider(),
-            &root,
-            Some(&source),
-            &settings,
-            rep.callback(),
-        )
-        .await?;
+        orchard_backup::restore_backup(&conn, &root, Some(&source), &settings, rep.callback())
+            .await?;
         Ok(())
     })
     .await

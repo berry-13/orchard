@@ -7,14 +7,13 @@ use std::pin::Pin;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
-use idevice::lockdown::LockdownClient;
+use idevice::IdeviceError;
 use idevice::mobilebackup2::{
     BackupDelegate, BackupProgress, DirEntryInfo, FsBackupDelegate, MobileBackup2Client,
     RestoreOptions,
 };
-use idevice::provider::IdeviceProvider;
-use idevice::{IdeviceError, IdeviceService};
 use orchard_core::{Error, Progress, Result};
+use orchard_device::DeviceConnection;
 use plist::{Dictionary, Value};
 use serde::{Deserialize, Serialize};
 
@@ -53,12 +52,12 @@ impl Default for RestoreSettings {
 /// Progress uses the `backup` stage, in bytes when the device announced a total and in
 /// percent otherwise.
 pub async fn create_backup(
-    provider: &dyn IdeviceProvider,
+    conn: &DeviceConnection,
     backup_root: &Path,
     full: bool,
     progress: impl FnMut(Progress) + Send,
 ) -> Result<BackupSummary> {
-    let values = device_values(provider).await?;
+    let values = device_values(conn).await?;
     let udid = values
         .get("UniqueDeviceID")
         .and_then(Value::as_string)
@@ -70,9 +69,7 @@ pub async fn create_backup(
     write_info_plist(&backup_dir.join("Info.plist"), &values)?;
 
     let delegate = ProgressDelegate::new("backup", progress);
-    let mut client = MobileBackup2Client::connect(provider)
-        .await
-        .map_err(device)?;
+    let mut client = conn.service::<MobileBackup2Client>().await?;
     let mut options = Dictionary::new();
     if full {
         options.insert("ForceFullBackup".into(), Value::Boolean(true));
@@ -89,7 +86,7 @@ pub async fn create_backup(
 /// Restores the backup at `backup_root/<source_udid>` onto the device. `source_udid`
 /// defaults to the device's own UDID. Progress uses the `restore` stage.
 pub async fn restore_backup(
-    provider: &dyn IdeviceProvider,
+    conn: &DeviceConnection,
     backup_root: &Path,
     source_udid: Option<&str>,
     settings: &RestoreSettings,
@@ -109,9 +106,7 @@ pub async fn restore_backup(
         password: settings.password.clone(),
     };
     let delegate = ProgressDelegate::new("restore", progress);
-    let mut client = MobileBackup2Client::connect(provider)
-        .await
-        .map_err(device)?;
+    let mut client = conn.service::<MobileBackup2Client>().await?;
     let response = client
         .restore_from_path(backup_root, source_udid, Some(options), &delegate)
         .await
@@ -121,8 +116,8 @@ pub async fn restore_backup(
 }
 
 /// Whether the device encrypts its backups (`WillEncrypt` in `com.apple.mobile.backup`).
-pub async fn backup_encryption_enabled(provider: &dyn IdeviceProvider) -> Result<bool> {
-    let mut lockdown = lockdown_session(provider).await?;
+pub async fn backup_encryption_enabled(conn: &DeviceConnection) -> Result<bool> {
+    let mut lockdown = conn.lockdown().await?;
     let value = lockdown
         .get_value(Some("WillEncrypt"), Some("com.apple.mobile.backup"))
         .await
@@ -133,7 +128,7 @@ pub async fn backup_encryption_enabled(provider: &dyn IdeviceProvider) -> Result
 /// Enables (`old` is `None`), disables (`new` is `None`) or changes backup encryption.
 /// The device may ask for its passcode on screen.
 pub async fn set_backup_password(
-    provider: &dyn IdeviceProvider,
+    conn: &DeviceConnection,
     old: Option<&str>,
     new: Option<&str>,
 ) -> Result<()> {
@@ -144,9 +139,7 @@ pub async fn set_backup_password(
     }
     let host_dir = tempfile::tempdir()?;
     let delegate = FsBackupDelegate;
-    let mut client = MobileBackup2Client::connect(provider)
-        .await
-        .map_err(device)?;
+    let mut client = conn.service::<MobileBackup2Client>().await?;
     let result = client
         .change_password_from_path(host_dir.path(), old, new, &delegate)
         .await
@@ -160,15 +153,8 @@ pub async fn set_backup_password(
     result
 }
 
-async fn lockdown_session(provider: &dyn IdeviceProvider) -> Result<LockdownClient> {
-    let mut lockdown = LockdownClient::connect(provider).await.map_err(device)?;
-    let pairing = provider.get_pairing_file().await.map_err(device)?;
-    lockdown.start_session(&pairing).await.map_err(device)?;
-    Ok(lockdown)
-}
-
-async fn device_values(provider: &dyn IdeviceProvider) -> Result<Dictionary> {
-    let mut lockdown = lockdown_session(provider).await?;
+async fn device_values(conn: &DeviceConnection) -> Result<Dictionary> {
+    let mut lockdown = conn.lockdown().await?;
     match lockdown.get_value(None, None).await.map_err(device)? {
         Value::Dictionary(dict) => Ok(dict),
         _ => Err(Error::Protocol(

@@ -1,8 +1,9 @@
 //! Device transport layer on top of the `idevice` crate.
 //!
 //! [`list_devices`] and [`watch_devices`] talk to usbmuxd. [`DeviceConnection`]
-//! opens services on one device, over USB, the usbmuxd network entry, or
-//! direct Wi-Fi with a pairing record kept in a [`PairingStore`]. Everything
+//! opens services on one device, over USB, the usbmuxd network entry, direct
+//! Wi-Fi with a pairing record kept in a [`PairingStore`], or a tunnel opened
+//! with a Wi-Fi pairing from a [`WifiPairingStore`]. Everything
 //! else is a method on [`DeviceConnection`]: info, pairing, apps, files,
 //! screenshots, syslog and power actions.
 
@@ -17,6 +18,7 @@ mod models;
 mod mux;
 mod pairing;
 mod syslog;
+mod tunnel;
 mod wifi_pairing;
 
 use std::fmt;
@@ -31,12 +33,14 @@ pub use discovery::{WifiDevice, discover_wifi_devices};
 pub use files::{
     DeviceFiles, FileEntry, FileKind, FileLocation, StorageInfo, join_path, normalize_path,
 };
+pub use idevice::ReadWrite;
 pub use idevice::pairing_file::PairingFile;
 pub use info::{DeviceInfo, Storage};
 pub use models::product_name;
 pub use mux::{DeviceEvent, DeviceWatcher, list_devices, watch_devices};
 pub use pairing::{PairOutcome, PairingStore, StoredPairing};
 pub use syslog::SyslogStream;
+pub use tunnel::{DialFuture, Dialer};
 pub use wifi_pairing::{
     PairedDevice, PairingAnnouncement, PairingSession, WifiPairing, WifiPairingStore,
     is_wifi_pairing,

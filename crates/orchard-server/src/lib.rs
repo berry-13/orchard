@@ -10,6 +10,11 @@
 //! - `GET  /api/download/{ticket}`  a file or zipped folder, ticket from `download_ticket`
 //! - `GET  /api/relay/pair/{id}`    WebSocket; send `{token}` first, then the bytes of the
 //!   connection a device opened to the pairing host a client announced (`start_wifi_pairing`)
+//! - `GET  /api/relay/devices`      WebSocket; send `{token}` first, then
+//!   `{type: "devices", devices: [{name, host, port}]}` whenever the paired devices found
+//!   on the client's network change; the server sends `{type: "open", id, host, port}`
+//! - `GET  /api/relay/stream/{id}`  WebSocket; send `{token}` first, then the bytes of the
+//!   device connection asked for with `open`
 //!
 //! Anyone holding a token can do everything the desktop user can, with the
 //! server's file access, so tokens are only handed out for a connect code
@@ -19,9 +24,10 @@ pub mod auth;
 pub mod files;
 pub mod relay;
 
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::body::{Body, Bytes};
@@ -37,7 +43,7 @@ use orchard_service::dto::AppInfo;
 use orchard_service::error::CommandError;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -57,6 +63,8 @@ pub struct AppState {
     pub allow_public: bool,
     /// Wi-Fi pairings waiting for their device, see [`relay`].
     pub pairings: relay::Pairings,
+    /// Device connections asked of clients, see [`relay`].
+    pub streams: Arc<relay::Streams>,
 }
 
 /// Wi-Fi pairing progress: `{sessionId, stage, pin?, device?, message?}`.
@@ -387,6 +395,138 @@ async fn run_pairing(socket: WebSocket, state: Arc<AppState>, session_id: String
     }
 }
 
+async fn relay_devices(State(state): State<Arc<AppState>>, ws: WebSocketUpgrade) -> Response {
+    ws.on_upgrade(move |socket| run_device_relay(socket, state))
+}
+
+async fn relay_stream(
+    State(state): State<Arc<AppState>>,
+    UrlPath(id): UrlPath<String>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    ws.on_upgrade(move |socket| async move {
+        if let Some((socket, _)) = authorize_socket(socket, &state).await {
+            state.streams.deliver(&id, relay::websocket_stream(socket));
+        }
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum RelayReport {
+    Devices { devices: Vec<RelayedService> },
+}
+
+/// A paired device's remote pairing service, as a client found it.
+#[derive(Deserialize)]
+struct RelayedService {
+    /// The Bonjour service name, stable while the device stays.
+    name: String,
+    host: String,
+    port: u16,
+}
+
+/// Bonjour service name to the UDID it was listed as, `None` while opening.
+type Relayed = Arc<Mutex<HashMap<String, Option<String>>>>;
+
+/// Lists the devices a client relays, for as long as its socket stays open.
+async fn run_device_relay(socket: WebSocket, state: Arc<AppState>) {
+    let Some((mut socket, token)) = authorize_socket(socket, &state).await else {
+        return;
+    };
+    let (control, mut opens) = mpsc::unbounded_channel::<String>();
+    let relayed = Relayed::default();
+    let mut recheck = tokio::time::interval(Duration::from_secs(15));
+    let mut revoked = false;
+    loop {
+        tokio::select! {
+            _ = recheck.tick() => {
+                if !state.auth.check(&token) {
+                    revoked = true;
+                    break;
+                }
+            },
+            Some(open) = opens.recv() => {
+                if socket.send(Message::Text(open.into())).await.is_err() {
+                    break;
+                }
+            },
+            message = socket.recv() => match message {
+                Some(Ok(Message::Text(text))) => {
+                    if let Ok(RelayReport::Devices { devices }) = serde_json::from_str(&text) {
+                        sync_relayed(&state, &control, &relayed, devices);
+                    }
+                }
+                Some(Ok(Message::Close(_)) | Err(_)) | None => break,
+                Some(Ok(_)) => {}
+            },
+        }
+    }
+    let udids: Vec<String> = relayed
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain()
+        .filter_map(|(_, udid)| udid)
+        .collect();
+    for udid in udids {
+        state.service.detach_relayed_device(&udid);
+    }
+    if revoked {
+        close_unauthorized(socket).await;
+    }
+}
+
+/// Unlists devices the client no longer sees and opens the new ones. A device
+/// that fails to open is tried again on the client's next report.
+fn sync_relayed(
+    state: &Arc<AppState>,
+    control: &mpsc::UnboundedSender<String>,
+    relayed: &Relayed,
+    devices: Vec<RelayedService>,
+) {
+    let mut known = relayed.lock().unwrap_or_else(|e| e.into_inner());
+    let gone: Vec<String> = known
+        .keys()
+        .filter(|name| !devices.iter().any(|d| &d.name == *name))
+        .cloned()
+        .collect();
+    for name in gone {
+        if let Some(Some(udid)) = known.remove(&name) {
+            state.service.detach_relayed_device(&udid);
+        }
+    }
+    for device in devices {
+        if known.contains_key(&device.name) {
+            continue;
+        }
+        known.insert(device.name.clone(), None);
+        let dialer = Arc::new(relay::RelayDialer::new(
+            device.host,
+            control.clone(),
+            state.streams.clone(),
+        ));
+        let (state, relayed) = (state.clone(), relayed.clone());
+        tokio::spawn(async move {
+            let result = state
+                .service
+                .attach_relayed_device(dialer, device.port)
+                .await;
+            let mut known = relayed.lock().unwrap_or_else(|e| e.into_inner());
+            match result {
+                // The client may have gone while the device opened.
+                Ok(udid) => match known.get_mut(&device.name) {
+                    Some(slot) => *slot = Some(udid),
+                    None => state.service.detach_relayed_device(&udid),
+                },
+                Err(e) => {
+                    eprintln!("relayed device {}: {}", device.name, e.message);
+                    known.remove(&device.name);
+                }
+            }
+        });
+    }
+}
+
 async fn stream_events(socket: WebSocket, state: Arc<AppState>) {
     let Some((mut socket, token)) = authorize_socket(socket, &state).await else {
         return;
@@ -437,7 +577,9 @@ pub fn router(state: Arc<AppState>, ui: Option<&Path>) -> Router {
         )
         .route("/api/download/{ticket}", get(download))
         .route("/api/events", get(events))
-        .route("/api/relay/pair/{session}", get(relay_pair));
+        .route("/api/relay/pair/{session}", get(relay_pair))
+        .route("/api/relay/devices", get(relay_devices))
+        .route("/api/relay/stream/{id}", get(relay_stream));
     let app = match ui {
         Some(ui) => {
             api.fallback_service(ServeDir::new(ui).fallback(ServeFile::new(ui.join("index.html"))))

@@ -69,6 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         events,
         allow_public: cli.allow_public,
         pairings: Default::default(),
+        streams: Default::default(),
     });
     if let Some(ui) = &cli.ui
         && !ui.join("index.html").is_file()

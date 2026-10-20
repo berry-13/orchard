@@ -1,6 +1,6 @@
 use idevice::diagnostics_relay::DiagnosticsRelayClient;
 use idevice::screenshotr::ScreenshotService;
-use orchard_core::Result;
+use orchard_core::{Error, Result};
 
 use crate::connect::DeviceConnection;
 use crate::error::device_error;
@@ -8,6 +8,13 @@ use crate::error::device_error;
 impl DeviceConnection {
     /// Captures the screen through screenshotr. Current iOS versions return PNG.
     pub async fn screenshot(&self) -> Result<Vec<u8>> {
+        // A Wi-Fi pairing tunnel does not list screenshotr.
+        if self.is_tunnel() {
+            return Err(Error::Device(
+                "Screenshots need a USB connection; this device is connected over a Wi-Fi pairing"
+                    .into(),
+            ));
+        }
         let mut service = self.service::<ScreenshotService>().await?;
         service
             .take_screenshot()

@@ -7,6 +7,7 @@
 
 use std::fs;
 use std::io::ErrorKind;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
 use idevice::ReadWrite;
@@ -32,6 +33,12 @@ pub struct PairedDevice {
     pub udid: String,
     /// The pairing record it belongs to.
     pub identifier: String,
+    /// Where the device was last reached, set by "Add Wi-Fi device".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<IpAddr>,
+    /// The port its remote pairing service answered on there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
 }
 
 /// How a pairing host must be announced over Bonjour so the device lists it.
@@ -95,6 +102,8 @@ impl PairingSession {
             model: peer.model,
             udid: peer.remotepairing_udid,
             identifier: self.file.identifier().to_owned(),
+            address: None,
+            port: None,
         };
         store.save(&self.file, &device)?;
         Ok(device)
@@ -153,8 +162,7 @@ impl WifiPairingStore {
     fn save(&self, record: &RpPairingFile, device: &PairedDevice) -> Result<()> {
         let path = self.path_for(record.identifier())?;
         fs::create_dir_all(&self.dir)?;
-        let meta = serde_json::to_vec_pretty(device).map_err(|e| Error::Io(e.into()))?;
-        orchard_core::write_private(&path.with_extension("json"), &meta)?;
+        self.save_device(device)?;
         let tmp = path.with_extension("plist.tmp");
         orchard_core::write_private(&tmp, &record.to_bytes())?;
         fs::rename(&tmp, &path)?;
@@ -171,6 +179,39 @@ impl WifiPairingStore {
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.into()),
         }
+    }
+
+    fn save_device(&self, device: &PairedDevice) -> Result<()> {
+        let path = self.path_for(&device.identifier)?.with_extension("json");
+        let meta = serde_json::to_vec_pretty(device).map_err(|e| Error::Io(e.into()))?;
+        orchard_core::write_private(&path, &meta)
+    }
+
+    /// Remembers where `device` answers, so it is listed and reached there.
+    pub fn set_route(&self, device: &PairedDevice, address: IpAddr, port: u16) -> Result<()> {
+        self.save_device(&PairedDevice {
+            address: Some(address),
+            port: Some(port),
+            ..device.clone()
+        })
+    }
+
+    /// Every device paired by [`PairingSession`], with its record.
+    pub fn devices(&self) -> Result<Vec<(PairedDevice, RpPairingFile)>> {
+        let mut devices = Vec::new();
+        for pairing in self.list()? {
+            if let Some(device) = self.device(&pairing.identifier)?
+                && let Some(record) = self.load(&pairing.identifier)?
+            {
+                devices.push((device, record));
+            }
+        }
+        Ok(devices)
+    }
+
+    /// The device with `udid` and its record.
+    pub fn find(&self, udid: &str) -> Result<Option<(PairedDevice, RpPairingFile)>> {
+        Ok(self.devices()?.into_iter().find(|(d, _)| d.udid == udid))
     }
 
     pub fn load(&self, identifier: &str) -> Result<Option<RpPairingFile>> {

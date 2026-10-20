@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use crate::events::Events;
 use base64::Engine;
-use orchard_core::Error;
-use orchard_device::{DeviceConnection, PairOutcome, PairingFile, WifiPairingStore};
+use orchard_core::{Error, Udid};
+use orchard_device::{DeviceConnection, Dialer, PairOutcome, PairingFile, WifiPairingStore};
 
 use crate::dto::{
     Connection, Device, DeviceEvent, DeviceEventKind, DeviceInfo, PairingImport, PairingKind,
@@ -33,6 +33,7 @@ pub fn model_name(product_type: &str) -> String {
 pub fn connection_kind(c: &orchard_device::Connection) -> Connection {
     match c {
         orchard_device::Connection::Network(_) => Connection::Wifi,
+        orchard_device::Connection::Other(kind) if kind == "relay" => Connection::Wifi,
         orchard_device::Connection::Usb | orchard_device::Connection::Other(_) => Connection::Usb,
     }
 }
@@ -185,7 +186,8 @@ pub async fn add_wifi_device(
 ) -> CmdResult<Device> {
     let ip = resolve(address.trim()).await?;
     let records = state.pairing().list()?;
-    if records.is_empty() {
+    let tunnels = state.wifi_pairing().devices()?;
+    if records.is_empty() && tunnels.is_empty() {
         return Err(Error::InvalidInput(
             "No paired devices yet. Pair it first: over USB, or over Wi-Fi from the iPad app (Settings, Pairing).".into(),
         )
@@ -201,10 +203,76 @@ pub async fn add_wifi_device(
             return Ok(info.device);
         }
     }
+    // Wi-Fi pairings: through a tunnel, which also works over a VPN.
+    let mut failure = None;
+    for (device, _) in tunnels {
+        let udid = Udid(device.udid.clone());
+        let conn = match DeviceConnection::connect_tunnel(&udid, ip, state.wifi_pairing()).await {
+            Ok(conn) => conn,
+            Err(e) => {
+                failure = Some(e);
+                continue;
+            }
+        };
+        match tokio::time::timeout(INFO_TIMEOUT, conn.info()).await {
+            Ok(Ok(info)) => {
+                let info = to_info(info, Connection::Wifi);
+                state.keep(&udid.0, conn);
+                state.remember(&info.device);
+                notify(&app, &udid.0);
+                return Ok(info.device);
+            }
+            Ok(Err(e)) => failure = Some(e),
+            Err(_) => {}
+        }
+    }
+    if let Some(e) = failure {
+        return Err(e.into());
+    }
     Err(Error::Device(format!(
         "No paired device answered at {address}. Check that it is on the same network and has Wi-Fi sync on."
     ))
     .into())
+}
+
+/// Opens a device a client found on its network and relays, trying each
+/// Wi-Fi pairing, and lists it. Returns its UDID.
+pub async fn attach_relayed(
+    app: Events,
+    state: &Arc<DeviceState>,
+    dialer: Arc<dyn Dialer>,
+    port: u16,
+) -> CmdResult<String> {
+    let conn =
+        DeviceConnection::connect_relayed(&*dialer, port, state.wifi_pairing(), None).await?;
+    let info = tokio::time::timeout(INFO_TIMEOUT, conn.info())
+        .await
+        .map_err(|_| Error::Device("the relayed device did not answer".into()))??;
+    let info = to_info(info, Connection::Wifi);
+    let udid = info.device.udid.clone();
+    state.add_relayed(&udid, dialer, port, conn);
+    state.remember(&info.device);
+    emit_device(
+        &app,
+        DeviceEvent {
+            kind: DeviceEventKind::Attached,
+            udid: udid.clone(),
+        },
+    );
+    Ok(udid)
+}
+
+/// Unlists a relayed device whose client went away.
+pub fn detach_relayed(app: &Events, state: &DeviceState, udid: &str) {
+    if state.remove_relayed(udid) {
+        emit_device(
+            app,
+            DeviceEvent {
+                kind: DeviceEventKind::Detached,
+                udid: udid.to_owned(),
+            },
+        );
+    }
 }
 
 pub async fn pair_device(app: Events, state: &Arc<DeviceState>, udid: String) -> CmdResult<()> {

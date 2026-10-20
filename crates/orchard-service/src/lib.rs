@@ -51,6 +51,21 @@ impl Service {
         self.settings.data_dir()
     }
 
+    /// Lists a device that a client on its network relays through `dialer`,
+    /// its remote pairing service being on `port`. Returns its UDID.
+    pub async fn attach_relayed_device(
+        &self,
+        dialer: Arc<dyn orchard_device::Dialer>,
+        port: u16,
+    ) -> CmdResult<String> {
+        commands::devices::attach_relayed(self.events.clone(), &self.devices, dialer, port).await
+    }
+
+    /// Unlists a relayed device, when its client stops relaying it.
+    pub fn detach_relayed_device(&self, udid: &str) {
+        commands::devices::detach_relayed(&self.events, &self.devices, udid);
+    }
+
     /// Follows USB attach and detach events forever; spawn it once.
     pub fn watch_devices(&self) -> impl Future<Output = ()> + Send + 'static {
         state::watch_devices(self.events.clone(), self.devices.clone())

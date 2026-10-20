@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 orchard-core.workspace = true
+orchard-device.workspace = true
 idevice = { workspace = true, features = ["mobilebackup2"] }
 serde.workspace = true
 plist.workspace = true

@@ -1,16 +1,27 @@
-//! Wi-Fi pairing through a client's network. The server is usually not on
-//! the device's Wi-Fi, so the iPad app announces the pairing host there and
-//! relays the connection the device opens to `/api/relay/pair/{session}`,
-//! where the server runs the pairing itself.
+//! Devices on a client's network. The server is usually not on the device's
+//! Wi-Fi, so the iPad app works there for it:
+//!
+//! - Pairing: the app announces the pairing host and relays the connection
+//!   the device opens to `/api/relay/pair/{session}`, where the server runs
+//!   the pairing itself.
+//! - Use: the app reports the paired devices it finds on its network over
+//!   `/api/relay/devices`. To reach one, the server sends the app
+//!   `{type: "open", id, host, port}` there, and the app connects to the
+//!   device and relays that connection over `/api/relay/stream/{id}`.
 
 use std::collections::HashMap;
+use std::fmt;
+use std::io;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
-use orchard_device::{PairingAnnouncement, PairingSession};
+use orchard_device::{DialFuture, Dialer, PairingAnnouncement, PairingSession, ReadWrite};
+use serde_json::json;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
+use tokio::sync::{mpsc, oneshot};
 
 /// A session the device has not connected to within this time is dropped.
 const SESSION_LIFETIME: Duration = Duration::from_secs(10 * 60);
@@ -38,6 +49,98 @@ impl Pairings {
             Some((session, at)) if at.elapsed() < SESSION_LIFETIME => Some(session),
             _ => None,
         }
+    }
+}
+
+/// How long the client has to open a requested device connection.
+const DIAL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Device connections the server asked a client for, by id, until the client
+/// opens them.
+#[derive(Debug, Default)]
+pub struct Streams {
+    pending: Mutex<HashMap<String, oneshot::Sender<DuplexStream>>>,
+}
+
+impl Streams {
+    fn expect(&self, id: &str) -> oneshot::Receiver<DuplexStream> {
+        let (tx, rx) = oneshot::channel();
+        lock(&self.pending).insert(id.to_owned(), tx);
+        rx
+    }
+
+    fn cancel(&self, id: &str) {
+        lock(&self.pending).remove(id);
+    }
+
+    /// Hands the connection the client opened to the dial waiting for it.
+    pub fn deliver(&self, id: &str, stream: DuplexStream) {
+        if let Some(tx) = lock(&self.pending).remove(id) {
+            let _ = tx.send(stream);
+        }
+    }
+}
+
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Dials one device through the client that found it at `host`.
+pub struct RelayDialer {
+    host: String,
+    /// The client's control socket.
+    control: mpsc::UnboundedSender<String>,
+    streams: Arc<Streams>,
+}
+
+impl RelayDialer {
+    pub fn new(
+        host: String,
+        control: mpsc::UnboundedSender<String>,
+        streams: Arc<Streams>,
+    ) -> Self {
+        Self {
+            host,
+            control,
+            streams,
+        }
+    }
+}
+
+impl fmt::Debug for RelayDialer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RelayDialer")
+            .field("host", &self.host)
+            .finish()
+    }
+}
+
+impl Dialer for RelayDialer {
+    fn dial(&self, port: u16) -> DialFuture<'_> {
+        Box::pin(async move {
+            let mut bytes = [0u8; 12];
+            getrandom::fill(&mut bytes).map_err(io::Error::other)?;
+            let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+            let opened = self.streams.expect(&id);
+            let open = json!({ "type": "open", "id": id, "host": self.host, "port": port });
+            if self.control.send(open.to_string()).is_err() {
+                self.streams.cancel(&id);
+                return Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "the relaying client went away",
+                ));
+            }
+            match tokio::time::timeout(DIAL_TIMEOUT, opened).await {
+                Ok(Ok(stream)) => Ok(Box::new(stream) as Box<dyn ReadWrite>),
+                _ => {
+                    self.streams.cancel(&id);
+                    Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "the relaying client did not connect",
+                    ))
+                }
+            }
+        })
     }
 }
 
@@ -98,5 +201,36 @@ mod tests {
         assert!(pairings.take("s1").is_some());
         assert!(pairings.take("s1").is_none());
         assert!(pairings.take("unknown").is_none());
+    }
+
+    #[tokio::test]
+    async fn dials_through_the_client() {
+        let streams = Arc::new(Streams::default());
+        let (control, mut opens) = mpsc::unbounded_channel();
+        let dialer = RelayDialer::new("172.20.10.2".into(), control, streams.clone());
+        let client = tokio::spawn(async move {
+            let open: serde_json::Value =
+                serde_json::from_str(&opens.recv().await.unwrap()).unwrap();
+            assert_eq!(open["type"], "open");
+            assert_eq!(open["host"], "172.20.10.2");
+            assert_eq!(open["port"], 49152);
+            let (ours, mut theirs) = tokio::io::duplex(64);
+            streams.deliver(open["id"].as_str().unwrap(), ours);
+            theirs.write_all(b"hi").await.unwrap();
+        });
+        let mut stream = dialer.dial(49152).await.unwrap();
+        let mut buf = [0u8; 2];
+        stream.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"hi");
+        client.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dial_fails_when_the_client_is_gone() {
+        let (control, opens) = mpsc::unbounded_channel();
+        drop(opens);
+        let dialer = RelayDialer::new("h".into(), control, Arc::default());
+        let err = dialer.dial(1).await.err().unwrap();
+        assert_eq!(err.kind(), io::ErrorKind::NotConnected);
     }
 }

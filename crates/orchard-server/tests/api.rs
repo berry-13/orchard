@@ -28,6 +28,7 @@ fn server(peer: &str) -> Server {
         events,
         allow_public: false,
         pairings: Default::default(),
+        streams: Default::default(),
     });
     let code = Auth::new_code(&server_dir).unwrap();
     let peer: SocketAddr = peer.parse().unwrap();
@@ -205,6 +206,7 @@ async fn pairing_relay_needs_a_token_and_reports_progress() {
         events: events.clone(),
         allow_public: false,
         pairings: Default::default(),
+        streams: Default::default(),
     });
     let code = Auth::new_code(&server_dir).unwrap();
     let token = state.auth.redeem(&code, "test").unwrap();

@@ -637,8 +637,7 @@ async fn backup(cmd: BackupCmd, target: &Target, store: &PairingStore, data: &Pa
         }
         BackupCmd::Create { full } => {
             let conn = target.connect(store).await?;
-            let summary =
-                orchard_backup::create_backup(conn.provider(), &root, full, report).await?;
+            let summary = orchard_backup::create_backup(&conn, &root, full, report).await?;
             finish_progress();
             println!("{}", summary.path.display());
         }
@@ -683,14 +682,8 @@ async fn backup(cmd: BackupCmd, target: &Target, store: &PairingStore, data: &Pa
                 ..Default::default()
             };
             let conn = target.connect(store).await?;
-            orchard_backup::restore_backup(
-                conn.provider(),
-                parent,
-                source.as_deref(),
-                &settings,
-                report,
-            )
-            .await?;
+            orchard_backup::restore_backup(&conn, parent, source.as_deref(), &settings, report)
+                .await?;
             finish_progress();
         }
     }

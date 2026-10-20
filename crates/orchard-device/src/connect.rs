@@ -1,13 +1,14 @@
 use std::future::Future;
 use std::net::IpAddr;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use idevice::lockdown::LockdownClient;
 use idevice::pairing_file::PairingFile;
 use idevice::provider::IdeviceProvider;
 use idevice::usbmuxd::{UsbmuxdAddr, UsbmuxdDevice};
-use idevice::{Idevice, IdeviceError, IdeviceService};
+use idevice::{Idevice, IdeviceError, IdeviceService, RsdService};
 use orchard_core::{Error, Result, Udid};
 use tokio::net::TcpStream;
 
@@ -16,6 +17,8 @@ use crate::discovery::find_wifi_device;
 use crate::error::device_error;
 use crate::mux::{self, mux_addr, mux_connect};
 use crate::pairing::PairingStore;
+use crate::tunnel::{Dialer, TcpDialer, Tunnel};
+use crate::wifi_pairing::WifiPairingStore;
 
 const LABEL: &str = "orchard";
 /// How long [`DeviceConnection::connect`] browses mDNS before giving up.
@@ -33,8 +36,16 @@ pub struct DeviceConnection {
 
 #[derive(Debug, Clone)]
 pub(crate) enum Route {
-    Mux { addr: UsbmuxdAddr, device_id: u32 },
-    Tcp { addr: IpAddr },
+    Mux {
+        addr: UsbmuxdAddr,
+        device_id: u32,
+    },
+    Tcp {
+        addr: IpAddr,
+    },
+    /// Through a tunnel opened with a Wi-Fi pairing; services come from its
+    /// RSD listing instead of lockdown.
+    Tunnel(Arc<Tunnel>),
 }
 
 /// Provider with a pre-resolved pairing record, for both usbmuxd and direct TCP.
@@ -60,6 +71,8 @@ impl IdeviceProvider for OrchardProvider {
                     let stream = TcpStream::connect((addr, port)).await?;
                     Ok(Idevice::new(Box::new(stream), LABEL))
                 }
+                // Tunnel services are opened by name, see DeviceConnection::service.
+                Route::Tunnel(_) => Err(IdeviceError::ServiceNotFound),
             }
         })
     }
@@ -134,6 +147,63 @@ impl DeviceConnection {
         Ok(Self::with_pairing(udid, addr, pairing))
     }
 
+    /// Opens a tunnel to `udid` at `addr` with its Wi-Fi pairing record in
+    /// `store`, and remembers the address so the device is listed there.
+    pub async fn connect_tunnel(
+        udid: &Udid,
+        addr: IpAddr,
+        store: &WifiPairingStore,
+    ) -> Result<Self> {
+        let (device, record) = store
+            .find(&udid.0)?
+            .ok_or_else(|| Error::NotFound(format!("Wi-Fi pairing for {udid}")))?;
+        let known = (device.address == Some(addr))
+            .then_some(device.port)
+            .flatten();
+        // Boxed: the handshake futures are large enough to overflow a worker
+        // thread's stack in debug builds.
+        let (tunnel, port) =
+            Box::pin(Tunnel::open(&TcpDialer(addr), known, &record, Some(addr))).await?;
+        if known != Some(port) {
+            store.set_route(&device, addr, port)?;
+        }
+        Ok(Self::new(
+            udid,
+            Connection::Network(addr),
+            Route::Tunnel(Arc::new(tunnel)),
+            None,
+        ))
+    }
+
+    /// Opens a tunnel through `dialer`, a client on the device's network, to
+    /// the remote pairing service on `port`. Tries the Wi-Fi pairing of
+    /// `udid`, or when it is not known yet each Wi-Fi pairing in `store`.
+    pub async fn connect_relayed(
+        dialer: &dyn Dialer,
+        port: u16,
+        store: &WifiPairingStore,
+        udid: Option<&Udid>,
+    ) -> Result<Self> {
+        let mut failure = None;
+        for (device, record) in store.devices()? {
+            if udid.is_some_and(|u| u.0 != device.udid) {
+                continue;
+            }
+            match Box::pin(Tunnel::open(dialer, Some(port), &record, None)).await {
+                Ok((tunnel, _)) => {
+                    return Ok(Self::new(
+                        &Udid(device.udid),
+                        Connection::Other("relay".into()),
+                        Route::Tunnel(Arc::new(tunnel)),
+                        None,
+                    ));
+                }
+                Err(e) => failure = Some(e),
+            }
+        }
+        Err(failure.unwrap_or_else(|| Error::NotFound("no Wi-Fi pairing for this device".into())))
+    }
+
     /// Prepares a direct Wi-Fi connection with an explicit pairing record.
     pub fn with_pairing(udid: &Udid, addr: IpAddr, pairing: PairingFile) -> Self {
         Self::new(
@@ -171,10 +241,9 @@ impl DeviceConnection {
         self.provider.pairing.as_ref()
     }
 
-    /// The underlying idevice provider, for services this crate does not wrap
-    /// (for example mobilebackup2 in `orchard-backup`).
-    pub fn provider(&self) -> &dyn IdeviceProvider {
-        &self.provider
+    /// Whether this connection runs through a Wi-Fi pairing tunnel.
+    pub fn is_tunnel(&self) -> bool {
+        matches!(self.provider.route, Route::Tunnel(_))
     }
 
     pub(crate) fn require_pairing(&self) -> Result<&PairingFile> {
@@ -184,15 +253,22 @@ impl DeviceConnection {
             .ok_or_else(|| Error::Device(format!("device {} is not paired", self.udid)))
     }
 
-    /// Lockdown without a session, enough for pairing requests.
+    /// Lockdown without a session, enough for pairing requests. Through a
+    /// tunnel this is the trusted lockdown, which needs no session.
     pub(crate) async fn lockdown_plain(&self) -> Result<LockdownClient> {
+        if let Route::Tunnel(tunnel) = &self.provider.route {
+            return tunnel.service().await;
+        }
         LockdownClient::connect(&self.provider)
             .await
             .map_err(|e| device_error("lockdown", e))
     }
 
     /// Lockdown with an authenticated session.
-    pub(crate) async fn lockdown(&self) -> Result<LockdownClient> {
+    pub async fn lockdown(&self) -> Result<LockdownClient> {
+        if self.is_tunnel() {
+            return self.lockdown_plain().await;
+        }
         let pairing = self.require_pairing()?;
         let mut lockdown = self.lockdown_plain().await?;
         lockdown
@@ -202,8 +278,11 @@ impl DeviceConnection {
         Ok(lockdown)
     }
 
-    /// Starts a lockdown service.
-    pub(crate) async fn service<S: IdeviceService>(&self) -> Result<S> {
+    /// Starts a service, through lockdown or the tunnel's service listing.
+    pub async fn service<S: IdeviceService + RsdService>(&self) -> Result<S> {
+        if let Route::Tunnel(tunnel) = &self.provider.route {
+            return tunnel.service().await;
+        }
         self.require_pairing()?;
         S::connect(&self.provider)
             .await
