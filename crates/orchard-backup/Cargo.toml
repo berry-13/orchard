@@ -9,6 +9,20 @@ repository.workspace = true
 
 [dependencies]
 orchard-core.workspace = true
+idevice = { workspace = true, features = ["mobilebackup2"] }
+serde.workspace = true
+plist.workspace = true
+rusqlite.workspace = true
+tempfile.workspace = true
+aes = "0.8"
+aes-kw = "0.2"
+cbc = "0.1"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+sha1 = "0.10"
+sha2 = "0.10"
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true
