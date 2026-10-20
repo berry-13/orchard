@@ -187,7 +187,7 @@ pub async fn add_wifi_device(
     let records = state.pairing().list()?;
     if records.is_empty() {
         return Err(Error::InvalidInput(
-            "No pairing records yet. Connect the device over USB and pair it first.".into(),
+            "No paired devices yet. Pair it first: over USB, or over Wi-Fi from the iPad app (Settings, Pairing).".into(),
         )
         .into());
     }

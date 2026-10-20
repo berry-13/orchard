@@ -216,6 +216,39 @@ html[data-material="preview"] [data-slot="sidebar-inner"] {
     backdrop-filter: blur(30px) saturate(180%);
 }
 
+/* Touch screens (the iPad app): the page itself never scrolls or bounces,
+   only the sidebar list and the content do, and both keep clear of the
+   status bar and the home indicator. */
+html[data-touch],
+html[data-touch] body {
+    height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    touch-action: manipulation;
+}
+html[data-touch] [data-slot="sidebar-wrapper"] {
+    height: 100dvh;
+    min-height: 0;
+}
+html[data-touch] [data-slot="sidebar-container"] {
+    height: 100dvh;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+}
+html[data-touch] [data-slot="sidebar-inset"] {
+    height: 100dvh;
+    padding-top: env(safe-area-inset-top);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+    overscroll-behavior: contain;
+}
+html[data-touch] [data-slot="sidebar-content"] {
+    overscroll-behavior: contain;
+}
+
 /* macOS traffic lights sit over the top left: the sidebar starts below them,
    and the page header makes room when the sidebar is collapsed. */
 html[data-titlebar="overlay"] [data-slot="sidebar-header"] {

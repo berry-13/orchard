@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <title>Orchard</title>
     <script>
@@ -20,7 +20,10 @@
         if (!/^(macos|windows|linux)$/.test(preview)) preview = null
         root.dataset.platform = preview || (/Mac/.test(ua) ? "macos" : /Windows/.test(ua) ? "windows" : "linux")
         var shell = !!window.__TAURI_INTERNALS__
-        if (root.dataset.platform === "macos" && (shell || preview)) root.dataset.titlebar = "overlay"
+        // iPadOS reports itself as a Mac; a touch screen tells them apart.
+        var touch = navigator.maxTouchPoints > 1 || /^(ipad|touch)$/.test(new URLSearchParams(location.search).get("device"))
+        if (touch) root.dataset.touch = ""
+        if (root.dataset.platform === "macos" && (shell || preview) && !touch) root.dataset.titlebar = "overlay"
         if (preview && preview !== "linux" && !shell) root.dataset.material = "preview"
       } catch (e) {}
     </script>

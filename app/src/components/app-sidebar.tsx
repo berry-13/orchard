@@ -48,6 +48,7 @@ import {
   SidebarMenuSkeleton,
   SidebarRail,
 } from "@/components/ui/sidebar"
+import { canPairOverWifi, WifiPairButton } from "@/components/wifi-pair-dialog"
 import { addWifiDevice, errorMessage, pairDevice, type Connection, type Device } from "@/lib/api"
 import { deviceKeys, useDevices } from "@/lib/devices"
 import { SECTIONS, useNav } from "@/lib/nav"
@@ -197,9 +198,15 @@ export function AddWifiDialog() {
           <DialogHeader>
             <DialogTitle>Add Wi-Fi device</DialogTitle>
             <DialogDescription>
-              The device must have been paired over USB once and be on the same network.
+              For a device that is already paired with this computer, on the same network.
             </DialogDescription>
           </DialogHeader>
+          {canPairOverWifi() ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-2">
+              <p className="text-sm text-muted-foreground">Not paired yet?</p>
+              <WifiPairButton />
+            </div>
+          ) : null}
           <div className="grid gap-2">
             <Label htmlFor="wifi-address">IP address or host name</Label>
             <Input
