@@ -1,0 +1,8 @@
+{
+  "name": "orchard-app-tauri",
+  "private": true,
+  "description": "Lets the generated Xcode project run `npm run tauri` here, next to tauri.conf.json; the CLI is installed in app/.",
+  "scripts": {
+    "tauri": "node ../../app/node_modules/@tauri-apps/cli/tauri.js"
+  }
+}

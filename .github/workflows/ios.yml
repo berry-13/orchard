@@ -45,8 +45,13 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix app --registry=https://registry.npmjs.org/
 
+      - name: Build the web UI
+        run: npm run build --prefix app
+
+      # Run from crates/orchard-app so the Xcode project's "Build Rust Code"
+      # phase finds crates/orchard-app/package.json when it calls npm.
       - name: Generate the Xcode project
-        working-directory: app
+        working-directory: crates/orchard-app
         run: npm run tauri -- ios init --ci
 
       - name: Build (Release, unsigned)
