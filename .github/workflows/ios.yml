@@ -1,0 +1,92 @@
+name: iPad app
+
+# Builds the iOS app (the iPad client of an Orchard server) as an unsigned IPA.
+# Sign it on the device, for example with Feather, or with your Apple ID.
+
+on:
+  push:
+    branches: [main, init]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  ipa:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install tools
+        run: brew install xcodegen
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix app --registry=https://registry.npmjs.org/
+
+      - name: Generate the Xcode project
+        working-directory: app
+        run: npm run tauri -- ios init --ci
+
+      - name: Build (Release, unsigned)
+        working-directory: crates/orchard-app/gen/apple
+        run: |
+          xcodebuild \
+            -project orchard-app.xcodeproj \
+            -scheme orchard-app_iOS \
+            -configuration release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            ARCHS=arm64 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package IPA
+        run: |
+          app=$(find "$RUNNER_TEMP/dd/Build/Products" -maxdepth 2 -name '*.app' -type d | head -1)
+          test -n "$app"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$app" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qr "$GITHUB_WORKSPACE/Orchard.ipa" Payload)
+          ls -la Orchard.ipa
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: Orchard-ipa
+          path: Orchard.ipa
+
+      # A stable download link for Feather: the latest build of each branch.
+      - name: Publish to the branch's prerelease
+        if: github.ref_type == 'branch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="ipa-${GITHUB_REF_NAME}"
+          gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$tag" Orchard.ipa --prerelease --target "$GITHUB_SHA" \
+            --title "iPad app (${GITHUB_REF_NAME}, latest build)" \
+            --notes "Unsigned build of ${GITHUB_SHA}. Sign it on the device, for example with Feather."
