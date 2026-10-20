@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 orchard-core.workspace = true
 orchard-service.workspace = true
+orchard-device.workspace = true
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["fs", "cors"] }
 futures-util = "0.3"
@@ -24,6 +25,7 @@ zip.workspace = true
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+tokio-tungstenite = "0.29"
 http-body-util = "0.1"
 tempfile.workspace = true
 

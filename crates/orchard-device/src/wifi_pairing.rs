@@ -1,14 +1,20 @@
-//! Wi-Fi pairing records (RPPairing) from the pairing iOS 27 starts on the
-//! device itself ("Pair with ..." in Developer Mode settings), as exported by
-//! apps such as StikPair. They hold this host's identity for the device's
+//! Wi-Fi pairing (RPPairing), the pairing iOS 27 starts on the device itself:
+//! a host announces `_remotepairing-pairable-host._tcp` on the local network,
+//! the user taps "Pair with ..." in Developer Mode settings and types the PIN
+//! the host shows. [`PairingSession`] is that host; records also come from
+//! apps such as StikPair. A record holds this host's identity for the device's
 //! remote pairing service, not a lockdown pairing record.
 
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use idevice::remote_pairing::RpPairingFile;
+use idevice::ReadWrite;
+use idevice::remote_pairing::{
+    PAIRABLE_HOST_SERVICE_TYPE, PairableHost, PairableHostInfo, RpPairingFile, RpPairingSocket,
+};
 use orchard_core::{Error, Result};
+use serde::{Deserialize, Serialize};
 
 use crate::error::device_error;
 
@@ -16,6 +22,83 @@ use crate::error::device_error;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WifiPairing {
     pub identifier: String,
+}
+
+/// The device a [`PairingSession`] paired with, saved next to its record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairedDevice {
+    pub name: String,
+    pub model: String,
+    pub udid: String,
+    /// The pairing record it belongs to.
+    pub identifier: String,
+}
+
+/// How a pairing host must be announced over Bonjour so the device lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PairingAnnouncement {
+    /// `_remotepairing-pairable-host._tcp`
+    pub service_type: String,
+    /// The service instance name, which is the record's host identifier.
+    pub service_name: String,
+    pub txt: Vec<(String, String)>,
+}
+
+/// One device-initiated pairing: announce [`Self::announcement`] on the
+/// device's network, then hand the connection the device opens to
+/// [`Self::accept`].
+pub struct PairingSession {
+    info: PairableHostInfo,
+    file: RpPairingFile,
+}
+
+impl PairingSession {
+    /// `name` is what the device shows as "Pair with <name>".
+    pub fn new(name: &str) -> Self {
+        // iOS lists only computers, so the model must be a Mac identifier.
+        Self {
+            info: PairableHostInfo::generate(name, "Mac17,7"),
+            file: RpPairingFile::generate(name),
+        }
+    }
+
+    pub fn announcement(&self) -> PairingAnnouncement {
+        let service_name = self.file.identifier().to_owned();
+        PairingAnnouncement {
+            service_type: PAIRABLE_HOST_SERVICE_TYPE
+                .trim_end_matches(".local.")
+                .to_owned(),
+            txt: self.info.mdns_txt_records(&service_name),
+            service_name,
+        }
+    }
+
+    /// Runs the pairing over `stream`, the connection the device opened.
+    /// `on_pin` gets the six digit code to show; the user types it on the
+    /// device. The record is saved to `store` on success.
+    pub async fn accept<S: ReadWrite + 'static>(
+        mut self,
+        stream: S,
+        store: &WifiPairingStore,
+        on_pin: impl FnOnce(String) + Send,
+    ) -> Result<PairedDevice> {
+        let mut host = PairableHost::new(RpPairingSocket::new_device(stream), self.info.clone());
+        let peer = host
+            .accept(&mut self.file, |pin| {
+                on_pin(pin);
+                async {}
+            })
+            .await
+            .map_err(|e| device_error("Wi-Fi pairing", e))?;
+        let device = PairedDevice {
+            name: peer.name,
+            model: peer.model,
+            udid: peer.remotepairing_udid,
+            identifier: self.file.identifier().to_owned(),
+        };
+        store.save(&self.file, &device)?;
+        Ok(device)
+    }
 }
 
 /// Wi-Fi pairing records, one `<identifier>.plist` each under
@@ -64,6 +147,30 @@ impl WifiPairingStore {
         orchard_core::write_private(&tmp, &record.to_bytes())?;
         fs::rename(&tmp, &path)?;
         Ok(WifiPairing { identifier })
+    }
+
+    /// Saves a record made by [`PairingSession`] with the device it pairs.
+    fn save(&self, record: &RpPairingFile, device: &PairedDevice) -> Result<()> {
+        let path = self.path_for(record.identifier())?;
+        fs::create_dir_all(&self.dir)?;
+        let meta = serde_json::to_vec_pretty(device).map_err(|e| Error::Io(e.into()))?;
+        orchard_core::write_private(&path.with_extension("json"), &meta)?;
+        let tmp = path.with_extension("plist.tmp");
+        orchard_core::write_private(&tmp, &record.to_bytes())?;
+        fs::rename(&tmp, &path)?;
+        Ok(())
+    }
+
+    /// The device a record pairs, when it was made by [`PairingSession`].
+    pub fn device(&self, identifier: &str) -> Result<Option<PairedDevice>> {
+        let path = self.path_for(identifier)?.with_extension("json");
+        match fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .map_err(|e| Error::Io(e.into())),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub fn load(&self, identifier: &str) -> Result<Option<RpPairingFile>> {
@@ -122,5 +229,24 @@ mod tests {
         assert!(store.import(b"not a plist").is_err());
         assert!(!is_wifi_pairing(b"<plist></plist>"));
         assert!(store.load("../escape").is_err());
+    }
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    // The pairing itself runs against a real device: idevice has no client
+    // that opens the way a device does (handshake without pair-verify).
+    #[test]
+    fn announces_what_the_device_looks_for() {
+        let session = PairingSession::new("Orchard");
+        let a = session.announcement();
+        assert_eq!(a.service_type, "_remotepairing-pairable-host._tcp");
+        let txt: std::collections::HashMap<_, _> = a.txt.iter().cloned().collect();
+        assert_eq!(txt["name"], "Orchard");
+        assert_eq!(txt["identifier"], a.service_name);
+        assert!(txt["model"].starts_with("Mac"), "iOS lists only computers");
+        assert!(!txt["authTag"].is_empty());
     }
 }

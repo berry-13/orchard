@@ -8,6 +8,8 @@
 //! - `GET  /api/events`             WebSocket; send `{token}` first, then `{event, payload}` frames
 //! - `POST /api/upload?name=`       raw file body -> `{path}` on the server
 //! - `GET  /api/download/{ticket}`  a file or zipped folder, ticket from `download_ticket`
+//! - `GET  /api/relay/pair/{id}`    WebSocket; send `{token}` first, then the bytes of the
+//!   connection a device opened to the pairing host a client announced (`start_wifi_pairing`)
 //!
 //! Anyone holding a token can do everything the desktop user can, with the
 //! server's file access, so tokens are only handed out for a connect code
@@ -15,6 +17,7 @@
 
 pub mod auth;
 pub mod files;
+pub mod relay;
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -52,6 +55,23 @@ pub struct AppState {
     pub events: broadcast::Sender<String>,
     /// Serve peers outside private, loopback and VPN ranges too.
     pub allow_public: bool,
+    /// Wi-Fi pairings waiting for their device, see [`relay`].
+    pub pairings: relay::Pairings,
+}
+
+/// Wi-Fi pairing progress: `{sessionId, stage, pin?, device?, message?}`.
+pub const WIFI_PAIRING_EVENT: &str = "orchard://wifi-pairing";
+
+fn emit(state: &AppState, event: &str, payload: Value) {
+    let _ = state
+        .events
+        .send(json!({ "event": event, "payload": payload }).to_string());
+}
+
+fn random_id() -> Result<String, ApiError> {
+    let mut bytes = [0u8; 12];
+    getrandom::fill(&mut bytes).map_err(|e| CommandError::new("unknown", e.to_string()))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// An event sender for [`orchard_service::Events`]: frames go to every client.
@@ -208,6 +228,24 @@ async fn call(
             )?;
             json!(format!("/api/download/{ticket}"))
         }
+        // Remote only: a pairing host for the client to announce on the device's Wi-Fi.
+        "start_wifi_pairing" => {
+            let name = args["name"].as_str().unwrap_or("Orchard");
+            let id = random_id()?;
+            let a = state.pairings.start(id.clone(), name);
+            let txt: serde_json::Map<String, Value> = a
+                .txt
+                .into_iter()
+                .map(|(k, v)| (k, Value::String(v)))
+                .collect();
+            json!({
+                "sessionId": id,
+                "relayPath": format!("/api/relay/pair/{id}"),
+                "serviceType": a.service_type,
+                "serviceName": a.service_name,
+                "txt": txt,
+            })
+        }
         _ => state.service.dispatch(&command, args).await?,
     };
     Ok(Json(reply))
@@ -291,8 +329,9 @@ async fn close_unauthorized(mut socket: WebSocket) {
         .await;
 }
 
-/// A browser WebSocket cannot send headers, so the token is the first message.
-async fn stream_events(mut socket: WebSocket, state: Arc<AppState>) {
+/// A browser WebSocket cannot send headers, so the token is the first
+/// message; `None` (and the socket closed) when it is missing or wrong.
+async fn authorize_socket(mut socket: WebSocket, state: &AppState) -> Option<(WebSocket, String)> {
     let first = tokio::time::timeout(Duration::from_secs(10), socket.recv()).await;
     let token = match first {
         Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<Hello>(&text)
@@ -300,9 +339,58 @@ async fn stream_events(mut socket: WebSocket, state: Arc<AppState>) {
             .unwrap_or_default(),
         _ => String::new(),
     };
-    if !state.auth.check(&token) {
-        return close_unauthorized(socket).await;
+    if state.auth.check(&token) {
+        Some((socket, token))
+    } else {
+        close_unauthorized(socket).await;
+        None
     }
+}
+
+async fn relay_pair(
+    State(state): State<Arc<AppState>>,
+    UrlPath(session): UrlPath<String>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    ws.on_upgrade(move |socket| run_pairing(socket, state, session))
+}
+
+/// Runs a Wi-Fi pairing over the device connection a client relays.
+async fn run_pairing(socket: WebSocket, state: Arc<AppState>, session_id: String) {
+    let Some((socket, _)) = authorize_socket(socket, &state).await else {
+        return;
+    };
+    let progress = |stage: &str, extra: Value| {
+        let mut payload = json!({ "sessionId": session_id, "stage": stage });
+        if let (Value::Object(p), Value::Object(e)) = (&mut payload, extra) {
+            p.extend(e);
+        }
+        emit(&state, WIFI_PAIRING_EVENT, payload);
+    };
+    let Some(session) = state.pairings.take(&session_id) else {
+        progress(
+            "failed",
+            json!({ "message": "This pairing expired; start it again" }),
+        );
+        return;
+    };
+    progress("connected", json!({}));
+    let store = orchard_device::WifiPairingStore::new(state.service.data_dir());
+    let result = session
+        .accept(relay::websocket_stream(socket), &store, |pin| {
+            progress("pin", json!({ "pin": pin }));
+        })
+        .await;
+    match result {
+        Ok(device) => progress("paired", json!({ "device": device })),
+        Err(e) => progress("failed", json!({ "message": e.to_string() })),
+    }
+}
+
+async fn stream_events(socket: WebSocket, state: Arc<AppState>) {
+    let Some((mut socket, token)) = authorize_socket(socket, &state).await else {
+        return;
+    };
     let mut rx = state.events.subscribe();
     // Revocation happens outside this connection; look again now and then.
     let mut recheck = tokio::time::interval(Duration::from_secs(15));
@@ -348,7 +436,8 @@ pub fn router(state: Arc<AppState>, ui: Option<&Path>) -> Router {
             post(upload).layer(DefaultBodyLimit::disable()),
         )
         .route("/api/download/{ticket}", get(download))
-        .route("/api/events", get(events));
+        .route("/api/events", get(events))
+        .route("/api/relay/pair/{session}", get(relay_pair));
     let app = match ui {
         Some(ui) => {
             api.fallback_service(ServeDir::new(ui).fallback(ServeFile::new(ui.join("index.html"))))

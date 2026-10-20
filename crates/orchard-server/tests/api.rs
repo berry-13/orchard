@@ -27,6 +27,7 @@ fn server(peer: &str) -> Server {
         files: Files::new(&server_dir).unwrap(),
         events,
         allow_public: false,
+        pairings: Default::default(),
     });
     let code = Auth::new_code(&server_dir).unwrap();
     let peer: SocketAddr = peer.parse().unwrap();
@@ -184,4 +185,88 @@ fn local_ranges() {
     for ip in ["8.8.8.8", "100.128.0.1", "2001:db8::1", "::ffff:8.8.8.8"] {
         assert!(!is_local(ip.parse().unwrap()), "{ip}");
     }
+}
+
+/// The relay a client opens for a device's pairing connection: refused
+/// without a token; with one, the session reports progress and a peer that is
+/// not a device ends in a `failed` event.
+#[tokio::test]
+async fn pairing_relay_needs_a_token_and_reports_progress() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let dir = tempfile::tempdir().unwrap();
+    let server_dir = dir.path().join("server");
+    let (events, sink) = event_channel();
+    let state = Arc::new(AppState {
+        service: Arc::new(Service::new(dir.path().to_path_buf(), sink).unwrap()),
+        auth: Auth::open(&server_dir).unwrap(),
+        files: Files::new(&server_dir).unwrap(),
+        events: events.clone(),
+        allow_public: false,
+        pairings: Default::default(),
+    });
+    let code = Auth::new_code(&server_dir).unwrap();
+    let token = state.auth.redeem(&code, "test").unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router(state, None).into_make_service_with_connect_info::<SocketAddr>();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let client = reqwest_free_post(addr, "/api/call/start_wifi_pairing", &token, "{}").await;
+    let session: Value = serde_json::from_str(&client).unwrap();
+    assert_eq!(session["serviceType"], "_remotepairing-pairable-host._tcp");
+    assert_eq!(session["txt"]["name"], "Orchard");
+    let url = format!("ws://{addr}{}", session["relayPath"].as_str().unwrap());
+
+    // Wrong token: closed with 4401.
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    ws.send(Message::text(json!({ "token": "nope" }).to_string()))
+        .await
+        .unwrap();
+    match ws.next().await {
+        Some(Ok(Message::Close(Some(frame)))) => assert_eq!(u16::from(frame.code), 4401),
+        other => panic!("expected close, got {other:?}"),
+    }
+
+    // Right token, then a peer that is not a device.
+    let mut progress = events.subscribe();
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    ws.send(Message::text(json!({ "token": token }).to_string()))
+        .await
+        .unwrap();
+    ws.send(Message::binary(b"not rppairing".to_vec()))
+        .await
+        .unwrap();
+    ws.close(None).await.unwrap();
+    let mut stages = Vec::new();
+    while let Ok(Ok(frame)) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), progress.recv()).await
+    {
+        let frame: Value = serde_json::from_str(&frame).unwrap();
+        if frame["event"] == "orchard://wifi-pairing" {
+            stages.push(frame["payload"]["stage"].as_str().unwrap().to_owned());
+            if stages
+                .last()
+                .is_some_and(|s| s == "failed" || s == "paired")
+            {
+                break;
+            }
+        }
+    }
+    assert_eq!(stages, ["connected", "failed"]);
+}
+
+/// A minimal HTTP POST, so the test needs no HTTP client crate.
+async fn reqwest_free_post(addr: SocketAddr, path: &str, token: &str, body: &str) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let req = format!(
+        "POST {path} HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).await.unwrap();
+    out.split_once("\r\n\r\n").unwrap().1.to_owned()
 }
