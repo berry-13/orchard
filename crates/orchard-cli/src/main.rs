@@ -1,12 +1,13 @@
 use std::process::ExitCode;
 
-fn main() -> ExitCode {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> ExitCode {
     let cmd = std::env::args().nth(1);
     match cmd.as_deref() {
-        Some("devices") => match orchard_device::list_devices() {
+        Some("devices") => match orchard_device::list_devices().await {
             Ok(devices) => {
-                for udid in devices {
-                    println!("{udid}");
+                for device in devices {
+                    println!("{}", device.udid);
                 }
                 ExitCode::SUCCESS
             }

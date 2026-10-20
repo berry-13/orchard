@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 orchard-core.workspace = true
 orchard-device.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }
 
 [lints]
 workspace = true

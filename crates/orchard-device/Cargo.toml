@@ -9,6 +9,31 @@ repository.workspace = true
 
 [dependencies]
 orchard-core.workspace = true
+idevice = { workspace = true, features = [
+    "usbmuxd",
+    "tcp",
+    "pair",
+    "mdns",
+    "afc",
+    "house_arrest",
+    "installation_proxy",
+    "springboardservices",
+    "screenshotr",
+    "syslog_relay",
+    "diagnostics_relay",
+] }
+tokio = { workspace = true, features = ["sync", "rt", "fs", "io-util", "time", "macros", "net"] }
+serde.workspace = true
+plist.workspace = true
+futures-util = "0.3"
+mdns-sd = "0.21"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile.workspace = true
+serde_json.workspace = true
+base64 = "0.22"
 
 [lints]
 workspace = true
