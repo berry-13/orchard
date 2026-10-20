@@ -45,38 +45,23 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix app --registry=https://registry.npmjs.org/
 
-      - name: Build the web UI
-        run: npm run build --prefix app
-
       # Run from crates/orchard-app so the Xcode project's "Build Rust Code"
       # phase finds crates/orchard-app/package.json when it calls npm.
       - name: Generate the Xcode project
         working-directory: crates/orchard-app
         run: npm run tauri -- ios init --ci
 
+      # Tauri's Xcode build phase talks to the running `tauri ios build`, so
+      # the build has to go through it; --no-sign leaves signing to the device.
       - name: Build (Release, unsigned)
-        working-directory: crates/orchard-app/gen/apple
-        run: |
-          xcodebuild \
-            -project orchard-app.xcodeproj \
-            -scheme orchard-app_iOS \
-            -configuration release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath "$RUNNER_TEMP/dd" \
-            ARCHS=arm64 \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            build
+        working-directory: crates/orchard-app
+        run: npm run tauri -- ios build --no-sign --ci --target aarch64
 
-      - name: Package IPA
+      - name: Collect the IPA
         run: |
-          app=$(find "$RUNNER_TEMP/dd/Build/Products" -maxdepth 2 -name '*.app' -type d | head -1)
-          test -n "$app"
-          mkdir -p "$RUNNER_TEMP/ipa/Payload"
-          cp -R "$app" "$RUNNER_TEMP/ipa/Payload/"
-          (cd "$RUNNER_TEMP/ipa" && zip -qr "$GITHUB_WORKSPACE/Orchard.ipa" Payload)
+          ipa=$(find crates/orchard-app/gen/apple/build -name '*.ipa' -type f | head -1)
+          test -n "$ipa"
+          cp "$ipa" Orchard.ipa
           ls -la Orchard.ipa
 
       - uses: actions/upload-artifact@v5
