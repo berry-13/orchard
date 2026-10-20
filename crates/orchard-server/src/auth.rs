@@ -3,11 +3,13 @@
 //! A client proves it may connect with a one-time connect code shown by the
 //! server (at start, or by `orchard-server code`) and gets a long random
 //! token for every later request. Only hashes of codes and tokens are stored.
-//! The code lives in a file so a second `orchard-server code` process can
-//! issue one for the running server.
+//! The code and the tokens live in files so a second `orchard-server code`
+//! or `orchard-server revoke` process acts on the running server: the token
+//! file is the source of truth, reloaded whenever it changes.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::MutexGuard;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
@@ -36,9 +38,15 @@ struct TokenEntry {
     created: u64,
 }
 
+/// The token file as last read, with the modification time and size it had.
+struct Tokens {
+    stamp: Option<(SystemTime, u64)>,
+    entries: Vec<TokenEntry>,
+}
+
 pub struct Auth {
     dir: PathBuf,
-    tokens: Mutex<Vec<TokenEntry>>,
+    tokens: Mutex<Tokens>,
 }
 
 fn now() -> u64 {
@@ -76,6 +84,19 @@ fn tokens_path(dir: &Path) -> PathBuf {
     dir.join("tokens.json")
 }
 
+fn stamp(dir: &Path) -> Option<(SystemTime, u64)> {
+    let meta = std::fs::metadata(tokens_path(dir)).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
+fn load_tokens(dir: &Path) -> Result<Vec<TokenEntry>> {
+    match std::fs::read(tokens_path(dir)) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| Error::Io(e.into())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e.into()),
+    }
+}
+
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let json = serde_json::to_vec_pretty(value).map_err(|e| Error::Io(e.into()))?;
     write_private(path, &json)
@@ -85,15 +106,26 @@ impl Auth {
     /// Loads the tokens issued so far from `dir`.
     pub fn open(dir: &Path) -> Result<Self> {
         std::fs::create_dir_all(dir)?;
-        let tokens = match std::fs::read(tokens_path(dir)) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| Error::Io(e.into()))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(e) => return Err(e.into()),
+        let tokens = Tokens {
+            stamp: stamp(dir),
+            entries: load_tokens(dir)?,
         };
         Ok(Self {
             dir: dir.to_path_buf(),
             tokens: Mutex::new(tokens),
         })
+    }
+
+    /// The tokens, reloaded when another process (`orchard-server revoke`)
+    /// changed the file. An unreadable file counts as no tokens.
+    fn tokens(&self) -> MutexGuard<'_, Tokens> {
+        let mut tokens = self.tokens.lock().unwrap_or_else(|e| e.into_inner());
+        let current = stamp(&self.dir);
+        if current != tokens.stamp {
+            tokens.entries = load_tokens(&self.dir).unwrap_or_default();
+            tokens.stamp = current;
+        }
+        tokens
     }
 
     /// Issues a new connect code, replacing any earlier one, formatted as
@@ -117,7 +149,7 @@ impl Auth {
 
     /// Forgets every issued token, signing out all clients.
     pub fn revoke_all(dir: &Path) -> Result<usize> {
-        let count = Self::open(dir)?.tokens.lock().map_or(0, |t| t.len());
+        let count = load_tokens(dir).map_or(0, |t| t.len());
         match std::fs::remove_file(tokens_path(dir)) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
             _ => Ok(count),
@@ -126,14 +158,14 @@ impl Auth {
 
     /// Whether any client was ever connected.
     pub fn has_clients(&self) -> bool {
-        self.tokens.lock().is_ok_and(|t| !t.is_empty())
+        !self.tokens().entries.is_empty()
     }
 
     /// Exchanges the current connect code for a token. A code works once,
     /// expires after [`CODE_LIFETIME_SECS`] and dies after too many wrong
     /// guesses.
     pub fn redeem(&self, code: &str, client: &str) -> Result<String> {
-        let mut tokens = self.tokens.lock().unwrap_or_else(|e| e.into_inner());
+        let mut tokens = self.tokens();
         let path = code_path(&self.dir);
         let rejected = || {
             Error::Auth(orchard_core::AuthError::BadCredentials(
@@ -155,21 +187,20 @@ impl Auth {
         }
         std::fs::remove_file(&path)?;
         let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random_bytes::<32>()?);
-        tokens.push(TokenEntry {
+        tokens.entries.push(TokenEntry {
             hash: hash(&token),
             client: client.chars().take(64).collect(),
             created: now(),
         });
-        write_json(&tokens_path(&self.dir), &*tokens)?;
+        write_json(&tokens_path(&self.dir), &tokens.entries)?;
+        tokens.stamp = stamp(&self.dir);
         Ok(token)
     }
 
     /// Whether `token` was issued by [`Auth::redeem`] and not revoked.
     pub fn check(&self, token: &str) -> bool {
         let hashed = hash(token);
-        self.tokens
-            .lock()
-            .is_ok_and(|t| t.iter().any(|e| e.hash == hashed))
+        self.tokens().entries.iter().any(|e| e.hash == hashed)
     }
 }
 
@@ -190,6 +221,28 @@ mod tests {
         assert!(Auth::open(dir.path()).unwrap().check(&token));
         assert_eq!(Auth::revoke_all(dir.path()).unwrap(), 1);
         assert!(!Auth::open(dir.path()).unwrap().check(&token));
+    }
+
+    #[test]
+    fn revoking_from_another_process_reaches_the_running_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let running = Auth::open(dir.path()).unwrap();
+        let first = running
+            .redeem(&Auth::new_code(dir.path()).unwrap(), "a")
+            .unwrap();
+        assert!(running.check(&first));
+
+        // `orchard-server revoke` runs as its own process.
+        assert_eq!(Auth::revoke_all(dir.path()).unwrap(), 1);
+        assert!(!running.check(&first), "revoked token still accepted");
+
+        // A later connection must not write the revoked token back.
+        let second = running
+            .redeem(&Auth::new_code(dir.path()).unwrap(), "b")
+            .unwrap();
+        assert!(running.check(&second));
+        assert!(!running.check(&first));
+        assert!(!Auth::open(dir.path()).unwrap().check(&first));
     }
 
     #[test]

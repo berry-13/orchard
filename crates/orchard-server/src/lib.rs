@@ -282,30 +282,40 @@ async fn events(State(state): State<Arc<AppState>>, ws: WebSocketUpgrade) -> Res
     ws.on_upgrade(move |socket| stream_events(socket, state))
 }
 
+async fn close_unauthorized(mut socket: WebSocket) {
+    let _ = socket
+        .send(Message::Close(Some(CloseFrame {
+            code: 4401,
+            reason: "unauthorized".into(),
+        })))
+        .await;
+}
+
 /// A browser WebSocket cannot send headers, so the token is the first message.
 async fn stream_events(mut socket: WebSocket, state: Arc<AppState>) {
     let first = tokio::time::timeout(Duration::from_secs(10), socket.recv()).await;
-    let authorized = match first {
-        Ok(Some(Ok(Message::Text(text)))) => {
-            serde_json::from_str::<Hello>(&text).is_ok_and(|hello| state.auth.check(&hello.token))
-        }
-        _ => false,
+    let token = match first {
+        Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<Hello>(&text)
+            .map(|hello| hello.token)
+            .unwrap_or_default(),
+        _ => String::new(),
     };
-    if !authorized {
-        let _ = socket
-            .send(Message::Close(Some(CloseFrame {
-                code: 4401,
-                reason: "unauthorized".into(),
-            })))
-            .await;
-        return;
+    if !state.auth.check(&token) {
+        return close_unauthorized(socket).await;
     }
     let mut rx = state.events.subscribe();
+    // Revocation happens outside this connection; look again now and then.
+    let mut recheck = tokio::time::interval(Duration::from_secs(15));
     let _ = socket
         .send(Message::Text(r#"{"event":"ready"}"#.into()))
         .await;
     loop {
         tokio::select! {
+            _ = recheck.tick() => {
+                if !state.auth.check(&token) {
+                    return close_unauthorized(socket).await;
+                }
+            },
             event = rx.recv() => match event {
                 Ok(frame) => {
                     if socket.send(Message::Text(frame.into())).await.is_err() {
