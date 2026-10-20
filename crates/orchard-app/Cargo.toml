@@ -1,0 +1,38 @@
+[package]
+name = "orchard-app"
+description = "Orchard desktop app, and the iPad client of an Orchard server (Tauri)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "orchard_app"
+path = "src/lib.rs"
+# staticlib for the iOS build, cdylib for Android.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "orchard-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde_json.workspace = true
+
+# The device stack runs on desktops only; the mobile app is a server client.
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+orchard-core.workspace = true
+orchard-service.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+window-vibrancy = "0.8"
+
+[lints]
+workspace = true

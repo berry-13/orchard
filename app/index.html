@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Orchard</title>
+    <script>
+      try {
+        var t = localStorage.getItem("orchard.theme") || "system"
+        if (t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches))
+          document.documentElement.classList.add("dark")
+      } catch (e) {}
+      try {
+        // Platform theme; ?platform=macos|windows previews another one in a browser.
+        var root = document.documentElement
+        var preview = new URLSearchParams(location.search).get("platform")
+        var ua = navigator.userAgent
+        if (!/^(macos|windows|linux)$/.test(preview)) preview = null
+        root.dataset.platform = preview || (/Mac/.test(ua) ? "macos" : /Windows/.test(ua) ? "windows" : "linux")
+        var shell = !!window.__TAURI_INTERNALS__
+        if (root.dataset.platform === "macos" && (shell || preview)) root.dataset.titlebar = "overlay"
+        if (preview && preview !== "linux" && !shell) root.dataset.material = "preview"
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

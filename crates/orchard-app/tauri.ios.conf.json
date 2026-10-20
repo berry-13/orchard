@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "security": {
+      "csp": {
+        "connect-src": "ipc: http://ipc.localhost http: https: ws: wss:"
+      }
+    }
+  }
+}

@@ -455,3 +455,61 @@ impl Service {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    /// Commands the desktop app or the server answer themselves.
+    const TRANSPORT_COMMANDS: &[&str] = &[
+        "app_info",
+        "open_data_dir",
+        "new_export_dir",
+        "download_ticket",
+    ];
+
+    fn names_between<'a>(
+        source: &'a str,
+        start: &str,
+        end: &str,
+        pattern: fn(&str) -> Option<&str>,
+    ) -> Vec<&'a str> {
+        let body = &source[source.find(start).unwrap()..];
+        let body = &body[..body.find(end).unwrap()];
+        body.lines().filter_map(pattern).collect()
+    }
+
+    #[test]
+    fn matches_the_frontend_command_table() {
+        let ts = include_str!("../../../app/src/lib/api.ts");
+        // Entries sit at two spaces; deeper lines are their argument types.
+        let frontend = names_between(ts, "export interface Commands {", "\n}", |l| {
+            l.strip_prefix("  ")
+                .filter(|l| !l.starts_with(' '))
+                .and_then(|l| l.split_once(':'))
+                .map(|(name, _)| name)
+                .filter(|n| n.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+        });
+        let rust = names_between(
+            include_str!("dispatch.rs"),
+            "match command {",
+            "_ => Err",
+            |l| {
+                l.trim()
+                    .strip_prefix('"')
+                    .and_then(|l| l.split_once('"'))
+                    .map(|(name, _)| name)
+            },
+        );
+        assert!(frontend.len() > 40, "parsed {frontend:?}");
+        for name in &frontend {
+            assert!(
+                rust.contains(name) || TRANSPORT_COMMANDS.contains(name),
+                "{name} is in api.ts but not dispatched"
+            );
+        }
+        for name in &rust {
+            assert!(
+                frontend.contains(name),
+                "{name} is dispatched but not in api.ts"
+            );
+        }
+    }
+}
