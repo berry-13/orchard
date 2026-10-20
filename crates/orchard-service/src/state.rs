@@ -36,6 +36,9 @@ pub struct DeviceState {
     relayed: Mutex<HashMap<String, Relay>>,
     /// Last known summary per device, so listing does not query every device.
     summaries: Mutex<HashMap<String, dto::Device>>,
+    /// Held while opening a connection, so concurrent commands share one
+    /// instead of each opening their own (a device answers one tunnel).
+    opening: tokio::sync::Mutex<()>,
 }
 
 impl DeviceState {
@@ -48,6 +51,7 @@ impl DeviceState {
             wifi: Mutex::default(),
             relayed: Mutex::default(),
             summaries: Mutex::default(),
+            opening: tokio::sync::Mutex::default(),
         }
     }
 
@@ -65,6 +69,10 @@ impl DeviceState {
 
     /// A cached connection to `udid`, opening one when needed.
     pub async fn connection(&self, udid: &str) -> CmdResult<Arc<DeviceConnection>> {
+        if let Some(conn) = lock(&self.connections).get(udid) {
+            return Ok(conn.clone());
+        }
+        let _opening = self.opening.lock().await;
         if let Some(conn) = lock(&self.connections).get(udid) {
             return Ok(conn.clone());
         }

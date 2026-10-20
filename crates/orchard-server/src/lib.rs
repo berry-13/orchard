@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::body::{Body, Bytes};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
@@ -432,8 +432,21 @@ struct RelayedService {
     auth_tag: String,
 }
 
-/// UDIDs of the devices a client relays; false while still opening.
-type Relayed = Arc<Mutex<HashMap<String, bool>>>;
+/// The devices a client relays, by UDID.
+type Relayed = Arc<Mutex<HashMap<String, RelayedDevice>>>;
+
+struct RelayedDevice {
+    /// False while still opening.
+    open: bool,
+    /// When the client last reported it.
+    seen: Instant,
+}
+
+/// How long a device may be missing from a client's reports before it is
+/// unlisted. Its advertisement changes now and then (a new service name,
+/// new TXT values) and drops out of a report or two meanwhile; unlisting it
+/// then would cut its tunnel while in use. Clients report every 30 seconds.
+const RELAY_GRACE: Duration = Duration::from_secs(75);
 
 /// Lists the devices a client relays, for as long as its socket stays open.
 async fn run_device_relay(socket: WebSocket, state: Arc<AppState>) {
@@ -472,7 +485,7 @@ async fn run_device_relay(socket: WebSocket, state: Arc<AppState>) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .drain()
-        .filter_map(|(udid, open)| open.then_some(udid))
+        .filter_map(|(udid, device)| device.open.then_some(udid))
         .collect();
     for udid in udids {
         state.service.detach_relayed_device(&udid);
@@ -501,21 +514,32 @@ fn sync_relayed(
         }
     }
     let mut known = relayed.lock().unwrap_or_else(|e| e.into_inner());
+    let now = Instant::now();
     let gone: Vec<String> = known
-        .keys()
-        .filter(|udid| !paired.contains_key(*udid))
-        .cloned()
+        .iter()
+        .filter(|(udid, device)| {
+            !paired.contains_key(*udid) && device.open && now - device.seen > RELAY_GRACE
+        })
+        .map(|(udid, _)| udid.clone())
         .collect();
     for udid in gone {
-        if known.remove(&udid) == Some(true) {
-            state.service.detach_relayed_device(&udid);
-        }
+        known.remove(&udid);
+        state.service.detach_relayed_device(&udid);
     }
     for (udid, device) in paired {
-        if known.contains_key(&udid) {
+        // Already listed or still opening: one tunnel per device, as the
+        // device drops a second pair-verify.
+        if let Some(known) = known.get_mut(&udid) {
+            known.seen = now;
             continue;
         }
-        known.insert(udid.clone(), false);
+        known.insert(
+            udid.clone(),
+            RelayedDevice {
+                open: false,
+                seen: now,
+            },
+        );
         let dialer = Arc::new(relay::RelayDialer::new(
             device.host,
             control.clone(),
@@ -531,7 +555,7 @@ fn sync_relayed(
             match result {
                 // The client may have gone while the device opened.
                 Ok(()) => match known.get_mut(&udid) {
-                    Some(open) => *open = true,
+                    Some(device) => device.open = true,
                     None => state.service.detach_relayed_device(&udid),
                 },
                 Err(e) => {
