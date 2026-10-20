@@ -146,15 +146,15 @@ class OrchardPairingPlugin: Plugin {
         break
       }
     }
-    // A pairing uses one connection. Relay only the first and stop announcing,
+    // A pairing uses one connection: relay only the first and refuse the rest,
     // so nothing else on the network can take the session's single attempt.
-    listener.newConnectionHandler = { [weak self, weak listener] connection in
+    // Keep announcing until `stop`, though: the device watches the Bonjour
+    // service while it pairs and aborts when it disappears.
+    listener.newConnectionHandler = { [weak self] connection in
       guard let self = self, self.relays.isEmpty else {
         connection.cancel()
         return
       }
-      listener?.newConnectionHandler = nil
-      listener?.cancel()
       self.relays.append(
         Relay(device: connection, url: url, token: args.token, queue: self.queue))
     }
