@@ -1,0 +1,35 @@
+[package]
+name = "orchard-server"
+description = "Orchard as a network service for the web and iPad clients"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+orchard-core.workspace = true
+orchard-service.workspace = true
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+futures-util = "0.3"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "fs", "sync", "time", "io-util"] }
+serde.workspace = true
+serde_json.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
+sha2 = "0.10"
+getrandom = "0.3"
+base64 = "0.22"
+zip.workspace = true
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+tempfile.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "orchard-server"
+path = "src/main.rs"
