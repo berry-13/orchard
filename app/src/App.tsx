@@ -7,6 +7,7 @@ import { TaskAnnouncer } from "@/components/task-tray"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { useDeviceRelay } from "@/components/wifi-pair-dialog"
 import { DeviceProvider } from "@/lib/devices"
 import { NavProvider, useNav, type Section } from "@/lib/nav"
 import { TaskProvider } from "@/lib/tasks"
@@ -35,6 +36,7 @@ function CurrentScreen() {
 }
 
 export function App() {
+  useDeviceRelay()
   return (
     <TooltipProvider delayDuration={300}>
       <NavProvider>

@@ -307,6 +307,18 @@
           "markdownDescription": "Denies the announce command without any pre-configured scope."
         },
         {
+          "description": "Enables the start_device_relay command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-device-relay",
+          "markdownDescription": "Enables the start_device_relay command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_device_relay command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-device-relay",
+          "markdownDescription": "Denies the start_device_relay command without any pre-configured scope."
+        },
+        {
           "description": "Enables the stop command without any pre-configured scope.",
           "type": "string",
           "const": "allow-stop",
@@ -319,10 +331,22 @@
           "markdownDescription": "Denies the stop command without any pre-configured scope."
         },
         {
-          "description": "Announce a pairing host and relay the device connection to the Orchard server.\n#### This default permission set includes:\n\n- `allow-announce`\n- `allow-stop`",
+          "description": "Enables the stop_device_relay command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-stop-device-relay",
+          "markdownDescription": "Enables the stop_device_relay command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop_device_relay command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-stop-device-relay",
+          "markdownDescription": "Denies the stop_device_relay command without any pre-configured scope."
+        },
+        {
+          "description": "Announce a pairing host, find paired devices on this network, and relay their connections to the Orchard server.\n#### This default permission set includes:\n\n- `allow-announce`\n- `allow-stop`\n- `allow-start-device-relay`\n- `allow-stop-device-relay`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Announce a pairing host and relay the device connection to the Orchard server.\n#### This default permission set includes:\n\n- `allow-announce`\n- `allow-stop`"
+          "markdownDescription": "Announce a pairing host, find paired devices on this network, and relay their connections to the Orchard server.\n#### This default permission set includes:\n\n- `allow-announce`\n- `allow-stop`\n- `allow-start-device-relay`\n- `allow-stop-device-relay`"
         }
       ]
     }

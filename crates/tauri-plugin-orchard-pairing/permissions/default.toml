@@ -1,5 +1,10 @@
 "$schema" = "schemas/schema.json"
 
 [default]
-description = "Announce a pairing host and relay the device connection to the Orchard server."
-permissions = ["allow-announce", "allow-stop"]
+description = "Announce a pairing host, find paired devices on this network, and relay their connections to the Orchard server."
+permissions = [
+    "allow-announce",
+    "allow-stop",
+    "allow-start-device-relay",
+    "allow-stop-device-relay",
+]

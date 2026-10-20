@@ -30,6 +30,26 @@ export function canPairOverWifi(): boolean {
 const stopAnnouncing = () => invoke("plugin:orchard-pairing|stop").catch(() => undefined)
 
 /**
+ * Lets the server reach devices paired over Wi-Fi that are on this iPad's
+ * network, its hotspot included: the app finds them and relays the
+ * server's connections to them, while it runs.
+ */
+export function useDeviceRelay() {
+  useEffect(() => {
+    if (!canPairOverWifi()) return
+    const control = relayTarget("/api/relay/devices")
+    void invoke("plugin:orchard-pairing|start_device_relay", {
+      controlUrl: control.url,
+      streamUrl: relayTarget("/api/relay/stream/").url,
+      token: control.token,
+    }).catch(() => undefined)
+    return () => {
+      void invoke("plugin:orchard-pairing|stop_device_relay").catch(() => undefined)
+    }
+  }, [])
+}
+
+/**
  * Pairs a device with the server over this iPad's Wi-Fi: the server sets up
  * the pairing host, this app announces it and relays the device's connection,
  * and the device shows "Pair with Orchard" in its Developer Mode settings.
