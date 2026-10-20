@@ -9,6 +9,14 @@ repository.workspace = true
 
 [dependencies]
 orchard-core.workspace = true
+orchard-device.workspace = true
+serde.workspace = true
+tokio = { workspace = true, features = ["fs"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "io-util"] }
+tempfile.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
