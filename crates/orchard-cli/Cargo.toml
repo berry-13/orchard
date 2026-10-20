@@ -10,6 +10,13 @@ repository.workspace = true
 [dependencies]
 orchard-core.workspace = true
 orchard-device.workspace = true
+orchard-ipa.workspace = true
+orchard-backup.workspace = true
+orchard-library.workspace = true
+clap = { version = "4", features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 [lints]
