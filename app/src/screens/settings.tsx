@@ -7,6 +7,7 @@ import { PageBody, PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { canPairOverWifi, WifiPairButton } from "@/components/wifi-pair-dialog"
 import {
   appInfo,
   currentBackend,
@@ -180,7 +181,8 @@ function PairingCard() {
           an app such as StikPair.
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex flex-wrap gap-2">
+        {canPairOverWifi() ? <WifiPairButton /> : null}
         <Button variant="outline" size="sm" onClick={() => void choose()} disabled={importFile.isPending}>
           <FileKey aria-hidden="true" />
           {importFile.isPending ? "Importing..." : "Import pairing file..."}

@@ -9,6 +9,11 @@
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Orchard connects to your Orchard server on the local network.</string>
+	<string>Orchard connects to your Orchard server and pairs your devices on the local network.</string>
+	<!-- Wi-Fi pairing: the pairing host this app announces for the server. -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_remotepairing-pairable-host._tcp</string>
+	</array>
 </dict>
 </plist>

@@ -467,6 +467,7 @@ mod tests {
         "open_data_dir",
         "new_export_dir",
         "download_ticket",
+        "start_wifi_pairing",
     ];
 
     fn names_between<'a>(

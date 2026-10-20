@@ -1,0 +1,18 @@
+[package]
+name = "tauri-plugin-orchard-pairing"
+description = "iOS side of Orchard's Wi-Fi pairing: announces the pairing host on the device's network and relays the device's connection to the Orchard server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+links = "tauri-plugin-orchard-pairing"
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[lints]
+workspace = true

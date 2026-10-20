@@ -180,6 +180,12 @@ export function uploadFile(file: File, onProgress?: (sent: number, total: number
   })
 }
 
+/** What the iPad app needs to open a relay WebSocket to the server itself. */
+export function relayTarget(path: string): { url: string; token: string } {
+  const origin = base || window.location.origin
+  return { url: `${origin.replace(/^http/i, "ws")}${path}`, token: token ?? "" }
+}
+
 /** Downloads a server file, or a folder as a zip, to this device. */
 export async function downloadFromServer(path: string): Promise<void> {
   const url = `${base || window.location.origin}${await remoteCall<string>("download_ticket", { path })}`

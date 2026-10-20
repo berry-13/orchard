@@ -89,9 +89,13 @@ mod backend {
 /// Builds and runs the Tauri application.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+    // Wi-Fi pairing through this device's network, for the server.
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_orchard_pairing::init());
+    builder
         .setup(|app| {
             backend::setup(app)?;
             let material = tauri::Manager::get_webview_window(app, "main")

@@ -88,6 +88,24 @@ export interface DeviceInfo extends Device {
 }
 
 /** What `import_pairing_file` stored: a classic USB-made record, or an iOS 27 Wi-Fi pairing. */
+/** A pairing host the server set up; the iPad app announces it on its Wi-Fi. */
+export interface WifiPairingSession {
+  sessionId: string
+  /** Relay WebSocket path on the server for the device's connection. */
+  relayPath: string
+  serviceType: string
+  serviceName: string
+  txt: Record<string, string>
+}
+
+export interface WifiPairingEvent {
+  sessionId: string
+  stage: "connected" | "pin" | "paired" | "failed"
+  pin?: string
+  device?: { name: string; model: string; udid: string; identifier: string }
+  message?: string
+}
+
 export interface PairingImport {
   kind: "lockdown" | "wifi"
   /** Device UDID (lockdown) or host identifier (Wi-Fi). */
@@ -500,6 +518,8 @@ export interface Commands {
   open_data_dir: { args: Empty; ret: void }
   /** Server only: a fresh folder for results a remote client will download. */
   new_export_dir: { args: Empty; ret: string }
+  /** Server only: a Wi-Fi pairing host for the iPad app to announce. */
+  start_wifi_pairing: { args: { name?: string }; ret: WifiPairingSession }
   app_info: { args: Empty; ret: AppInfo }
 }
 
@@ -565,6 +585,7 @@ export const EVENTS = {
   devices: "orchard://devices",
   syslog: "orchard://syslog",
   syslogStatus: "orchard://syslog-status",
+  wifiPairing: "orchard://wifi-pairing",
 } as const
 
 interface EventPayloads {
@@ -572,6 +593,7 @@ interface EventPayloads {
   [EVENTS.devices]: DeviceEvent
   [EVENTS.syslog]: SyslogLine
   [EVENTS.syslogStatus]: SyslogEnded
+  [EVENTS.wifiPairing]: WifiPairingEvent
 }
 
 /** Subscribes to a backend event. Resolves to an unsubscribe function. */
@@ -601,6 +623,7 @@ export const unpairDevice = (udid: string) => call("unpair_device", { udid })
 export const setWifiSync = (udid: string, enabled: boolean) =>
   call("set_wifi_sync", { udid, enabled })
 export const importPairingFile = (path: string) => call("import_pairing_file", { path })
+export const startWifiPairing = () => call("start_wifi_pairing", { name: "Orchard" })
 /** Returns a PNG as a base64 string (no data URL prefix). */
 export const takeScreenshot = (udid: string) => call("take_screenshot", { udid })
 export const saveScreenshot = (path: string, png: string) => call("save_screenshot", { path, png })

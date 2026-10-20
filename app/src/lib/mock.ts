@@ -1156,6 +1156,15 @@ export const mockHandlers: Handlers = {
     }
   },
   async open_data_dir() {},
+  async start_wifi_pairing() {
+    return {
+      sessionId: "mock",
+      relayPath: "/api/relay/pair/mock",
+      serviceType: "_remotepairing-pairable-host._tcp",
+      serviceName: "mock",
+      txt: {},
+    }
+  },
   async new_export_dir() {
     return "/home/you/Downloads/Orchard"
   },
