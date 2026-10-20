@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Check, Copy, ExternalLink, FolderOpen, Laptop, LogOut, Moon, Server, Sun } from "lucide-react"
+import { Check, Copy, ExternalLink, FileKey, FolderOpen, Laptop, LogOut, Moon, Server, Sun } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
@@ -12,7 +12,9 @@ import {
   currentBackend,
   errorMessage,
   getSettings,
+  importPairingFile,
   openDataDir,
+  pickFiles,
   pickFolder,
   setDownloadDir,
   type Settings,
@@ -145,6 +147,43 @@ function ServerCard() {
         <Button variant="outline" size="sm" className="shrink-0" onClick={disconnect}>
           <LogOut aria-hidden="true" />
           Disconnect
+        </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
+function PairingCard() {
+  const queryClient = useQueryClient()
+  const importFile = useMutation({
+    mutationFn: importPairingFile,
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: ["devices"] })
+      toast.success(result.kind === "wifi" ? "Wi-Fi pairing imported" : "Pairing record imported", {
+        description: result.id,
+      })
+    },
+    onError: (e) => toast.error("Could not import the pairing file", { description: errorMessage(e) }),
+  })
+
+  const choose = async () => {
+    const [path] = await pickFiles("Choose a pairing file")
+    if (path) importFile.mutate(path)
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm">Pairing</CardTitle>
+        <CardDescription>
+          Import a pairing made elsewhere: a record from another computer, or an iOS 27 Wi-Fi pairing exported by
+          an app such as StikPair.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button variant="outline" size="sm" onClick={() => void choose()} disabled={importFile.isPending}>
+          <FileKey aria-hidden="true" />
+          {importFile.isPending ? "Importing..." : "Import pairing file..."}
         </Button>
       </CardContent>
     </Card>
@@ -290,6 +329,7 @@ export default function SettingsScreen() {
           <>
             {currentBackend() === "remote" ? <ServerCard /> : null}
             <DownloadsCard settings={settings} />
+            <PairingCard />
             <StorageCard settings={settings} />
           </>
         )}

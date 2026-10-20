@@ -18,7 +18,7 @@ orchard-library = { path = "crates/orchard-library" }
 orchard-service = { path = "crates/orchard-service" }
 
 # idevice breaks its API on every 0.1.x release, so it stays pinned exactly.
-idevice = { version = "=0.1.68", default-features = false, features = ["ring"] }
+idevice = { version = "=0.1.68", default-features = false, features = ["ring", "remote_pairing"] }
 tokio = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

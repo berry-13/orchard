@@ -684,6 +684,10 @@ export const mockHandlers: Handlers = {
     emit("orchard://devices", { kind: "updated", udid })
     return null
   },
+  async import_pairing_file({ path }) {
+    await sleep(300)
+    return { kind: "wifi" as const, id: path.split("/").pop()?.replace(/\.[^.]+$/, "") || "pairing" }
+  },
   async set_wifi_sync({ udid, enabled }) {
     await latency()
     device(udid).wifiSyncEnabled = enabled

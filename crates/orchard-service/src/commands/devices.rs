@@ -9,9 +9,11 @@ use std::time::Duration;
 use crate::events::Events;
 use base64::Engine;
 use orchard_core::Error;
-use orchard_device::{DeviceConnection, PairOutcome};
+use orchard_device::{DeviceConnection, PairOutcome, PairingFile, WifiPairingStore};
 
-use crate::dto::{Connection, Device, DeviceEvent, DeviceEventKind, DeviceInfo};
+use crate::dto::{
+    Connection, Device, DeviceEvent, DeviceEventKind, DeviceInfo, PairingImport, PairingKind,
+};
 use crate::error::{CmdResult, CommandError};
 use crate::events::emit_device;
 use crate::state::DeviceState;
@@ -267,6 +269,36 @@ pub async fn shutdown_device(state: &Arc<DeviceState>, udid: String) -> CmdResul
     state.connection(&udid).await?.shutdown().await?;
     state.forget(&udid);
     Ok(())
+}
+
+/// Stores a pairing record made elsewhere: a classic lockdown record (from
+/// another computer) or an iOS 27 Wi-Fi pairing record (from an app such as
+/// StikPair), whichever the file is.
+pub async fn import_pairing_file(
+    state: &Arc<DeviceState>,
+    path: String,
+) -> CmdResult<PairingImport> {
+    let bytes = tokio::fs::read(&path).await?;
+    if orchard_device::is_wifi_pairing(&bytes) {
+        let stored = WifiPairingStore::new(state.data_dir()).import(&bytes)?;
+        return Ok(PairingImport {
+            kind: PairingKind::Wifi,
+            id: stored.identifier,
+        });
+    }
+    let record = PairingFile::from_bytes(&bytes)
+        .map_err(|_| Error::InvalidInput("this is not a pairing record Orchard knows".into()))?;
+    let udid = record.udid.clone().ok_or_else(|| {
+        Error::InvalidInput("the pairing record does not say which device it is for".into())
+    })?;
+    state
+        .pairing()
+        .import(&orchard_core::Udid(udid.clone()), &bytes)?;
+    state.forget(&udid);
+    Ok(PairingImport {
+        kind: PairingKind::Lockdown,
+        id: udid,
+    })
 }
 
 #[cfg(test)]

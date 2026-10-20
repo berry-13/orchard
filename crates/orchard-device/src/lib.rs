@@ -17,6 +17,7 @@ mod models;
 mod mux;
 mod pairing;
 mod syslog;
+mod wifi_pairing;
 
 use std::fmt;
 use std::net::IpAddr;
@@ -36,6 +37,7 @@ pub use models::product_name;
 pub use mux::{DeviceEvent, DeviceWatcher, list_devices, watch_devices};
 pub use pairing::{PairOutcome, PairingStore, StoredPairing};
 pub use syslog::SyslogStream;
+pub use wifi_pairing::{WifiPairing, WifiPairingStore, is_wifi_pairing};
 
 /// How a device is reached.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

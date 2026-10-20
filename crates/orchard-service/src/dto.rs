@@ -10,6 +10,24 @@ pub enum Connection {
     Wifi,
 }
 
+/// What `import_pairing_file` stored.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairingImport {
+    pub kind: PairingKind,
+    /// The device UDID (lockdown) or host identifier (Wi-Fi) the record is filed under.
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PairingKind {
+    /// A classic lockdown record, as made over USB.
+    Lockdown,
+    /// An iOS 27 Wi-Fi (RPPairing) record.
+    Wifi,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Device {

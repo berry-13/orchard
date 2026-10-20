@@ -73,6 +73,10 @@ impl Service {
                         .await,
                 )
             }
+            "import_pairing_file" => {
+                args!(a, args, { path: String });
+                reply(commands::devices::import_pairing_file(&self.devices, a.path).await)
+            }
             "set_wifi_sync" => {
                 args!(a, args, { udid: String, enabled: bool });
                 reply(commands::devices::set_wifi_sync(&self.devices, a.udid, a.enabled).await)

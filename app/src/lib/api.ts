@@ -87,6 +87,13 @@ export interface DeviceInfo extends Device {
   wifiSyncEnabled: boolean
 }
 
+/** What `import_pairing_file` stored: a classic USB-made record, or an iOS 27 Wi-Fi pairing. */
+export interface PairingImport {
+  kind: "lockdown" | "wifi"
+  /** Device UDID (lockdown) or host identifier (Wi-Fi). */
+  id: string
+}
+
 export interface DeviceEvent {
   kind: "attached" | "detached" | "updated"
   udid: string
@@ -366,6 +373,7 @@ export interface Commands {
   pair_device: { args: { udid: string }; ret: null }
   unpair_device: { args: { udid: string }; ret: null }
   set_wifi_sync: { args: { udid: string; enabled: boolean }; ret: null }
+  import_pairing_file: { args: { path: string }; ret: PairingImport }
   take_screenshot: { args: { udid: string }; ret: string }
   save_screenshot: { args: { path: string; png: string }; ret: null }
   restart_device: { args: { udid: string }; ret: null }
@@ -592,6 +600,7 @@ export const pairDevice = (udid: string) => call("pair_device", { udid })
 export const unpairDevice = (udid: string) => call("unpair_device", { udid })
 export const setWifiSync = (udid: string, enabled: boolean) =>
   call("set_wifi_sync", { udid, enabled })
+export const importPairingFile = (path: string) => call("import_pairing_file", { path })
 /** Returns a PNG as a base64 string (no data URL prefix). */
 export const takeScreenshot = (udid: string) => call("take_screenshot", { udid })
 export const saveScreenshot = (path: string, png: string) => call("save_screenshot", { path, png })
