@@ -13,31 +13,36 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Read only by default; only the publish job, which runs no third-party
+# actions, can write. Actions are pinned to commits (tag in the comment).
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   ipa:
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Select Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: latest-stable
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: aarch64-apple-ios
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Install tools
         run: brew install xcodegen
@@ -64,19 +69,29 @@ jobs:
           cp "$ipa" Orchard.ipa
           ls -la Orchard.ipa
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: Orchard-ipa
           path: Orchard.ipa
 
-      # A stable download link for Feather: the latest build of each branch.
+  # A stable download link for Feather: the latest build of each branch.
+  publish:
+    needs: ipa
+    if: github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: Orchard-ipa
+
       - name: Publish to the branch's prerelease
-        if: github.ref_type == 'branch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="ipa-${GITHUB_REF_NAME}"
-          gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
-          gh release create "$tag" Orchard.ipa --prerelease --target "$GITHUB_SHA" \
+          gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$tag" Orchard.ipa --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
             --title "iPad app (${GITHUB_REF_NAME}, latest build)" \
             --notes "Unsigned build of ${GITHUB_SHA}. Sign it on the device, for example with Feather."
