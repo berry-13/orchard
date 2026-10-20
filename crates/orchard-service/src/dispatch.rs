@@ -105,6 +105,10 @@ impl Service {
                 args!(a, args, { udid: String, bundle_id: String });
                 reply(commands::apps::app_icon(&self.devices, a.udid, a.bundle_id).await)
             }
+            "open_store_page" => {
+                args!(a, args, { udid: String, app_id: u64 });
+                reply(commands::apps::open_store_page(&self.devices, a.udid, a.app_id).await)
+            }
             "uninstall_app" => {
                 args!(a, args, { udid: String, bundle_id: String });
                 reply(commands::apps::uninstall_app(&self.devices, a.udid, a.bundle_id).await)

@@ -733,6 +733,10 @@ export const mockHandlers: Handlers = {
     list.splice(i, 1)
     return null
   },
+  async open_store_page() {
+    await sleep(400)
+    return null
+  },
   async inspect_ipa({ path }) {
     await sleep(600)
     if (!path.toLowerCase().endsWith(".ipa")) fail("invalidInput", `${baseName(path)} is not an IPA file`)

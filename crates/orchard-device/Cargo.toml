@@ -23,6 +23,7 @@ idevice = { workspace = true, features = [
     "diagnostics_relay",
     "rsd",
     "tunnel_tcp_stack",
+    "core_device",
 ] }
 tokio = { workspace = true, features = ["sync", "rt", "fs", "io-util", "time", "macros", "net"] }
 serde.workspace = true

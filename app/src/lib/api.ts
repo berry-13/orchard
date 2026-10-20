@@ -400,6 +400,7 @@ export interface Commands {
   list_apps: { args: { udid: string }; ret: InstalledApp[] }
   app_icon: { args: { udid: string; bundleId: string }; ret: string | null }
   uninstall_app: { args: { udid: string; bundleId: string }; ret: null }
+  open_store_page: { args: { udid: string; appId: number }; ret: null }
   inspect_ipa: { args: { path: string }; ret: IpaInfo }
   install_ipa: { args: { taskId: string; udid: string; path: string }; ret: null }
 
@@ -639,6 +640,8 @@ export const listApps = (udid: string) => call("list_apps", { udid })
 export const appIcon = (udid: string, bundleId: string) => call("app_icon", { udid, bundleId })
 export const uninstallApp = (udid: string, bundleId: string) =>
   call("uninstall_app", { udid, bundleId })
+/** Opens the App Store on the device at the app's page; its owner taps Get there. */
+export const openStorePage = (udid: string, appId: number) => call("open_store_page", { udid, appId })
 export const inspectIpa = (path: string) => call("inspect_ipa", { path })
 export const installIpa = (taskId: string, udid: string, path: string) =>
   call("install_ipa", { taskId, udid, path })

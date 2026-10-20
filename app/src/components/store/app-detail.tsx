@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { Download, Smartphone } from "lucide-react"
+import { Download, ExternalLink, Smartphone } from "lucide-react"
 import { useState } from "react"
 
 import { Rating } from "@/components/store/rating"
@@ -35,11 +35,13 @@ function DetailBody({
   device,
   onDownload,
   onInstall,
+  onOpenOnDevice,
 }: {
   app: StoreApp
   device: Device | null
   onDownload: (versionId: string | null) => void
   onInstall: (versionId: string | null) => void
+  onOpenOnDevice: () => void
 }) {
   const [version, setVersion] = useState(LATEST)
   const versions = useQuery({
@@ -115,6 +117,12 @@ function DetailBody({
           <Smartphone aria-hidden="true" />
           <span className="truncate">{device ? `Install on ${device.name}` : "Connect a device to install"}</span>
         </Button>
+        {device ? (
+          <Button variant="outline" onClick={onOpenOnDevice}>
+            <ExternalLink aria-hidden="true" />
+            <span className="truncate">Open in App Store on {device.name}</span>
+          </Button>
+        ) : null}
         <Button variant="outline" onClick={() => onDownload(versionId)}>
           <Download aria-hidden="true" />
           Download IPA
@@ -132,6 +140,7 @@ export function AppDetailSheet({
   onOpenChange,
   onDownload,
   onInstall,
+  onOpenOnDevice,
 }: {
   app: StoreApp | null
   open: boolean
@@ -139,6 +148,8 @@ export function AppDetailSheet({
   onOpenChange: (open: boolean) => void
   onDownload: (app: StoreApp, versionId: string | null) => void
   onInstall: (app: StoreApp, versionId: string | null) => void
+  /** Opens the app's page in the device's App Store, to get it with the device's Apple ID. */
+  onOpenOnDevice: (app: StoreApp) => void
 }) {
   return (
     <Sheet open={open && app !== null} onOpenChange={onOpenChange}>
@@ -150,6 +161,7 @@ export function AppDetailSheet({
             device={device}
             onDownload={(v) => onDownload(app, v)}
             onInstall={(v) => onInstall(app, v)}
+            onOpenOnDevice={() => onOpenOnDevice(app)}
           />
         ) : null}
       </SheetContent>

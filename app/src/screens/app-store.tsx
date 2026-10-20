@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import {
   errorMessage,
   isOrchardError,
+  openStorePage,
   storeAccount,
   storeSearch,
   storeSignOut,
@@ -249,6 +250,17 @@ function StoreBrowser({ account }: { account: StoreAccount }) {
           if (!device) return
           setSheetOpen(false)
           install(app, versionId, device)
+        }}
+        onOpenOnDevice={(app) => {
+          if (!device) return
+          openStorePage(device.udid, app.appId).then(
+            () =>
+              toast.success(`${app.name} is open on ${device.name}`, {
+                description: "Tap Get in the App Store there to install it with that iPhone's Apple ID.",
+              }),
+            (e: unknown) =>
+              toast.error(`Could not open the App Store on ${device.name}`, { description: errorMessage(e) }),
+          )
         }}
       />
       {licenseDialog}

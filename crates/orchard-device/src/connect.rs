@@ -278,6 +278,19 @@ impl DeviceConnection {
         Ok(lockdown)
     }
 
+    /// Connects to a service that only the tunnel of a Wi-Fi pairing offers.
+    pub(crate) async fn tunnel_connect(
+        &self,
+        name: &str,
+    ) -> Result<idevice::tcp::handle::StreamHandle> {
+        match &self.provider.route {
+            Route::Tunnel(tunnel) => tunnel.connect(name).await,
+            _ => Err(Error::Device(
+                "This needs the device paired over Wi-Fi (Settings, Pairing)".into(),
+            )),
+        }
+    }
+
     /// Starts a service, through lockdown or the tunnel's service listing.
     pub async fn service<S: IdeviceService + RsdService>(&self) -> Result<S> {
         if let Route::Tunnel(tunnel) = &self.provider.route {

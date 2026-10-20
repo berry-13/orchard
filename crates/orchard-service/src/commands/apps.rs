@@ -75,6 +75,17 @@ pub async fn app_icon(
         .map(|png| png_data_url(&png)))
 }
 
+/// Opens the App Store on the device at the app's page, for its owner to get
+/// it with their own Apple ID.
+pub async fn open_store_page(state: &Arc<DeviceState>, udid: String, app_id: u64) -> CmdResult<()> {
+    state
+        .connection(&udid)
+        .await?
+        .open_store_page(app_id)
+        .await?;
+    Ok(())
+}
+
 pub async fn uninstall_app(
     state: &Arc<DeviceState>,
     udid: String,

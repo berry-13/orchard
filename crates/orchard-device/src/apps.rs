@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Mutex;
 
+use idevice::core_device::AppServiceClient;
 use idevice::installation_proxy::InstallationProxyClient;
 use idevice::springboardservices::SpringBoardServicesClient;
 use orchard_core::{Error, Progress, Result};
@@ -240,6 +241,36 @@ impl DeviceConnection {
             )
             .await
             .map_err(|e| device_error(&format!("install {}", ipa.display()), e))
+    }
+
+    /// Opens the App Store on the device at app `app_id`'s page, where its
+    /// owner gets it with their own Apple ID. Needs a Wi-Fi pairing tunnel:
+    /// launching apps is a CoreDevice service.
+    pub async fn open_store_page(&self, app_id: u64) -> Result<()> {
+        let stream = self
+            .tunnel_connect("com.apple.coredevice.appservice")
+            .await?;
+        let mut apps = AppServiceClient::new(stream)
+            .await
+            .map_err(|e| device_error("app service", e))?;
+        let mut options = Dictionary::new();
+        // FrontBoard opens this URL in the launched app.
+        options.insert(
+            "__PayloadURL".into(),
+            Value::String(format!("itms-apps://apps.apple.com/app/id{app_id}")),
+        );
+        apps.launch_application(
+            "com.apple.AppStore",
+            &[],
+            true,
+            false,
+            None,
+            Some(options),
+            None,
+        )
+        .await
+        .map_err(|e| device_error("open the App Store", e))?;
+        Ok(())
     }
 
     pub async fn uninstall_app(&self, bundle_id: &str) -> Result<()> {

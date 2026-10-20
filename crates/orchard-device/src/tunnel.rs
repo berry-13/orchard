@@ -19,7 +19,7 @@ use idevice::remote_pairing::{
 };
 use idevice::rsd::RsdHandshake;
 use idevice::tcp::adapter::Adapter;
-use idevice::tcp::handle::AdapterHandle;
+use idevice::tcp::handle::{AdapterHandle, StreamHandle};
 use idevice::{IdeviceError, ReadWrite, RsdService};
 use orchard_core::{Error, Result};
 use tokio::net::TcpStream;
@@ -206,20 +206,23 @@ impl Tunnel {
     /// Starts service `S` through the tunnel.
     pub(crate) async fn service<S: RsdService>(&self) -> Result<S> {
         let name = S::rsd_service_name();
-        let port = *self
-            .services
-            .get(name.as_ref())
-            .ok_or_else(|| Error::Device(format!("the device does not offer {name}")))?;
-        let stream = self
-            .handle
-            .clone()
-            .connect(port)
-            .await
-            .map_err(|e| device_error(&name, IdeviceError::Socket(e)))?;
-        let stream: Box<dyn ReadWrite> = Box::new(stream);
+        let stream: Box<dyn ReadWrite> = Box::new(self.connect(&name).await?);
         S::from_stream(stream)
             .await
             .map_err(|e| device_error(&name, e))
+    }
+
+    /// Opens a connection to the service named `name` in the RSD listing.
+    pub(crate) async fn connect(&self, name: &str) -> Result<StreamHandle> {
+        let port = *self
+            .services
+            .get(name)
+            .ok_or_else(|| Error::Device(format!("the device does not offer {name}")))?;
+        self.handle
+            .clone()
+            .connect(port)
+            .await
+            .map_err(|e| device_error(name, IdeviceError::Socket(e)))
     }
 }
 
