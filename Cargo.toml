@@ -5,7 +5,7 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/berry-13/orchard"
 
@@ -15,6 +15,18 @@ orchard-device = { path = "crates/orchard-device" }
 orchard-backup = { path = "crates/orchard-backup" }
 orchard-ipa = { path = "crates/orchard-ipa" }
 orchard-library = { path = "crates/orchard-library" }
+orchard-service = { path = "crates/orchard-service" }
+
+# idevice breaks its API on every 0.1.x release, so it stays pinned exactly.
+idevice = { version = "=0.1.68", default-features = false, features = ["ring"] }
+tokio = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+plist = "1.8"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots-no-provider", "json", "stream"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+tempfile = "3"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
