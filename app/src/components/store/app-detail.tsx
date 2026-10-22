@@ -1,10 +1,19 @@
 import { useQuery } from "@tanstack/react-query"
-import { Download, ExternalLink, Smartphone } from "lucide-react"
+import { Download, ExternalLink, QrCode, Smartphone } from "lucide-react"
+import { QRCodeSVG } from "qrcode.react"
 import { useState } from "react"
 
 import { Rating } from "@/components/store/rating"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
@@ -27,6 +36,41 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="min-w-0 truncate font-medium">{children}</dd>
     </div>
+  )
+}
+
+/** A QR code of the app's App Store link, for a phone's camera to open it there. */
+function StoreQrCode({ app }: { app: StoreApp }) {
+  const url = `https://apps.apple.com/app/id${app.appId}`
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="outline">
+          <QrCode aria-hidden="true" />
+          Show QR code
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Get {app.name} on an iPhone</DialogTitle>
+          <DialogDescription>
+            Scan this with the iPhone's camera to open the app in its App Store, then tap Get.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="mx-auto rounded-lg bg-white p-4">
+          <QRCodeSVG
+            value={url}
+            size={240}
+            marginSize={0}
+            bgColor="#ffffff"
+            fgColor="#000000"
+            role="img"
+            aria-label={`QR code for ${app.name} in the App Store`}
+          />
+        </div>
+        <p className="truncate text-center font-mono text-xs text-muted-foreground">{url}</p>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -123,6 +167,7 @@ function DetailBody({
             <span className="truncate">Open in App Store on {device.name}</span>
           </Button>
         ) : null}
+        <StoreQrCode app={app} />
         <Button variant="outline" onClick={() => onDownload(versionId)}>
           <Download aria-hidden="true" />
           Download IPA
