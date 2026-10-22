@@ -89,12 +89,53 @@ jobs:
         with:
           name: Orchard-ipa
 
+      # A Feather (AltStore format) source next to the IPA. Feather offers an
+      # update whenever the version differs, so each build gets its own.
+      - name: Write the Feather source
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/ipa-${GITHUB_REF_NAME}"
+          jq -n \
+            --arg branch "$GITHUB_REF_NAME" \
+            --arg version "0.1.0-${GITHUB_RUN_NUMBER}" \
+            --arg build "$GITHUB_RUN_NUMBER" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg url "${base}/Orchard.ipa" \
+            --arg icon "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/crates/orchard-app/icons/128x128@2x.png" \
+            --arg notes "$(printf '%s' "$COMMIT_MESSAGE" | head -1) (${GITHUB_SHA::7})" \
+            --argjson size "$(stat -c %s Orchard.ipa)" \
+            '{
+              name: "Orchard (\($branch))",
+              identifier: "dev.berry13.orchard.source.\($branch)",
+              apps: [{
+                name: "Orchard",
+                bundleIdentifier: "dev.berry13.orchard",
+                developerName: "berry13",
+                iconURL: $icon,
+                localizedDescription: "The iPad client of an Orchard server.",
+                version: $version,
+                versionDate: $date,
+                downloadURL: $url,
+                size: $size,
+                versions: [{
+                  version: $version,
+                  buildVersion: $build,
+                  date: $date,
+                  localizedDescription: $notes,
+                  downloadURL: $url,
+                  size: $size
+                }]
+              }]
+            }' > source.json
+          cat source.json
+
       - name: Publish to the branch's prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="ipa-${GITHUB_REF_NAME}"
           gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
-          gh release create "$tag" Orchard.ipa --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+          gh release create "$tag" Orchard.ipa source.json --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
             --title "iPad app (${GITHUB_REF_NAME}, latest build)" \
             --notes "Unsigned build of ${GITHUB_SHA}. Sign it on the device, for example with Feather."
