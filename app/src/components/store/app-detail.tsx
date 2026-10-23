@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { Download, ExternalLink, QrCode, Smartphone } from "lucide-react"
+import { Download, ExternalLink, Smartphone } from "lucide-react"
 import { QRCodeSVG } from "qrcode.react"
 import { useState } from "react"
 
@@ -39,38 +39,72 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-/** A QR code of the app's App Store link, for a phone's camera to open it there. */
-function StoreQrCode({ app }: { app: StoreApp }) {
+/**
+ * Ways to get the app on someone's iPhone with their own Apple ID: a QR code
+ * of its App Store link for the phone's camera, or opening that page on the
+ * connected device.
+ */
+function GetOnIPhone({
+  app,
+  device,
+  onOpenOnDevice,
+}: {
+  app: StoreApp
+  device: Device | null
+  onOpenOnDevice: () => void
+}) {
   const url = `https://apps.apple.com/app/id${app.appId}`
+  const code = (size: number) => (
+    <QRCodeSVG
+      value={url}
+      size={size}
+      marginSize={0}
+      bgColor="#ffffff"
+      fgColor="#000000"
+      role="img"
+      aria-label={`QR code for ${app.name} in the App Store`}
+    />
+  )
   return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <Button variant="outline">
-          <QrCode aria-hidden="true" />
-          Show QR code
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Get {app.name} on an iPhone</DialogTitle>
-          <DialogDescription>
-            Scan this with the iPhone's camera to open the app in its App Store, then tap Get.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="mx-auto rounded-lg bg-white p-4">
-          <QRCodeSVG
-            value={url}
-            size={240}
-            marginSize={0}
-            bgColor="#ffffff"
-            fgColor="#000000"
-            role="img"
-            aria-label={`QR code for ${app.name} in the App Store`}
-          />
+    <section aria-labelledby="store-get-on-iphone" className="flex gap-4 rounded-xl border bg-muted/40 p-3">
+      <Dialog>
+        <DialogTrigger asChild>
+          <button
+            type="button"
+            aria-label="Enlarge the QR code"
+            className="shrink-0 rounded-lg bg-white p-2 shadow-sm ring-1 ring-black/5 transition-transform duration-150 outline-none hover:scale-[1.03] focus-visible:ring-3 focus-visible:ring-ring/50 active:scale-[0.98]"
+          >
+            {code(104)}
+          </button>
+        </DialogTrigger>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Get {app.name} on an iPhone</DialogTitle>
+            <DialogDescription>
+              Scan this with the iPhone's camera to open the app in its App Store, then tap Get.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mx-auto rounded-xl bg-white p-4">{code(260)}</div>
+          <p className="truncate text-center font-mono text-xs text-muted-foreground">{url}</p>
+        </DialogContent>
+      </Dialog>
+      <div className="grid min-w-0 content-center gap-2">
+        <div className="grid gap-0.5">
+          <h3 id="store-get-on-iphone" className="text-sm font-medium">
+            Get it on an iPhone
+          </h3>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Scan with the iPhone's camera, then tap Get there with its own Apple ID. Tap the code to enlarge it.
+          </p>
         </div>
-        <p className="truncate text-center font-mono text-xs text-muted-foreground">{url}</p>
-      </DialogContent>
-    </Dialog>
+        {device ? (
+          <Button variant="outline" size="sm" className="justify-self-start" onClick={onOpenOnDevice}>
+            <ExternalLink aria-hidden="true" />
+            <span className="truncate">Open on {device.name}</span>
+          </Button>
+        ) : null}
+      </div>
+    </section>
   )
 }
 
@@ -113,6 +147,7 @@ function DetailBody({
         </div>
       </SheetHeader>
       <div className="grid flex-1 content-start gap-5 overflow-y-auto px-4">
+        <GetOnIPhone app={app} device={device} onOpenOnDevice={onOpenOnDevice} />
         <Rating value={app.averageRating} count={app.ratingCount} />
         <dl className="divide-y rounded-lg border px-3">
           <Field label="Version">{app.version}</Field>
@@ -161,13 +196,6 @@ function DetailBody({
           <Smartphone aria-hidden="true" />
           <span className="truncate">{device ? `Install on ${device.name}` : "Connect a device to install"}</span>
         </Button>
-        {device ? (
-          <Button variant="outline" onClick={onOpenOnDevice}>
-            <ExternalLink aria-hidden="true" />
-            <span className="truncate">Open in App Store on {device.name}</span>
-          </Button>
-        ) : null}
-        <StoreQrCode app={app} />
         <Button variant="outline" onClick={() => onDownload(versionId)}>
           <Download aria-hidden="true" />
           Download IPA

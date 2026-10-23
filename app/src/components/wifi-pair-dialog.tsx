@@ -54,7 +54,7 @@ export function useDeviceRelay() {
  * the pairing host, this app announces it and relays the device's connection,
  * and the device shows "Pair with Orchard" in its Developer Mode settings.
  */
-export function WifiPairButton() {
+export function WifiPairButton({ label = "Pair a device over Wi-Fi..." }: { label?: string }) {
   const [open, setOpen] = useState(false)
   const [phase, setPhase] = useState<Phase>({ kind: "starting" })
   const session = useRef<string | null>(null)
@@ -117,7 +117,7 @@ export function WifiPairButton() {
         }}
       >
         <Wifi aria-hidden="true" />
-        Pair a device over Wi-Fi...
+        {label}
       </Button>
       <Dialog open={open} onOpenChange={close}>
         <DialogContent className="sm:max-w-md">
